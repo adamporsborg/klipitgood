@@ -1,0 +1,20 @@
+node_modules
+dist
+.env
+.env.local
+.DS_Store
+npm-debug.log*
+
+# Worker output — never commit rendered clips or transcripts
+output/
+tmp/
+worker/_transcript_*.json
+worker/_meta_*.json
+worker/_response_*.json
+worker/_prompt_*.txt
+worker/_pending_*.json
+worker/_temp_clips/
+worker/_versions.json
+
+# Supabase local dev
+.supabase/
