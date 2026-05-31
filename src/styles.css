@@ -1176,3 +1176,150 @@ a {
     max-width: 100%;
   }
 }
+
+/* ─── Creative Brief ───────────────────────────────────────────────────────── */
+
+.brief-wrapper {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: #0c0f17;
+  padding: 0;
+}
+
+.clip-brief {
+  padding: 20px clamp(14px, 3vw, 28px) 24px;
+  display: grid;
+  gap: 18px;
+}
+
+.brief-section {
+  display: grid;
+  gap: 8px;
+}
+
+.brief-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+@media (max-width: 600px) {
+  .brief-row { grid-template-columns: 1fr; }
+}
+
+.brief-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #8d95a6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brief-hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #555d6e;
+  font-size: 11px;
+}
+
+.brief-note {
+  font-size: 11px;
+  color: #14f167;
+  margin: 0;
+  padding: 6px 10px;
+  background: rgba(20, 241, 103, 0.06);
+  border-radius: 6px;
+  border: 1px solid rgba(20, 241, 103, 0.15);
+}
+
+.brief-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.brief-chip {
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #8d95a6;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.brief-chip:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f6f7fb;
+}
+
+.brief-chip.active {
+  border-color: #14f167;
+  background: rgba(20, 241, 103, 0.12);
+  color: #14f167;
+  font-weight: 600;
+}
+
+.brief-textarea {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: #f6f7fb;
+  font-size: 14px;
+  resize: vertical;
+  transition: border-color 0.15s;
+}
+
+.brief-textarea:focus {
+  outline: none;
+  border-color: rgba(20, 241, 103, 0.4);
+}
+
+.brief-textarea::placeholder {
+  color: #3a414f;
+  line-height: 1.7;
+}
+
+.brief-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: #f6f7fb;
+  font-size: 14px;
+  transition: border-color 0.15s;
+}
+
+.brief-input:focus {
+  outline: none;
+  border-color: rgba(20, 241, 103, 0.4);
+}
+
+.brief-input::placeholder {
+  color: #3a414f;
+}
+
+.brief-submit {
+  min-height: 46px;
+  background: #14f167;
+  color: #07080b;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  letter-spacing: -0.2px;
+}
+
+.brief-submit:hover {
+  opacity: 0.88;
+}

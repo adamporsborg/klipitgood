@@ -207,28 +207,75 @@ async function resolveFootage(project) {
   throw new Error(`Unsupported footage_url. Use a local path, file:// URL, YouTube URL, or direct https URL: ${source}`);
 }
 
+/**
+ * parseBrief(text) — reads the serialized creative brief from the portal.
+ * Brief lines look like:  DIRECTIVE: ...\nJUMP_CUTS: none\nCAPTIONS: off\n...
+ * Returns an object with parsed values, falling back to defaults.
+ */
+function parseBrief(text = "") {
+  const lines = text.split("\n");
+  const get = (key) => {
+    const line = lines.find(l => l.startsWith(`${key}:`));
+    return line ? line.slice(key.length + 1).trim() : null;
+  };
+  return {
+    directive:     get("DIRECTIVE"),
+    jumpCuts:      get("JUMP_CUTS"),      // "none" | null
+    captions:      get("CAPTIONS"),       // "off" | null
+    captionStyle:  get("CAPTION_STYLE"),  // "bold-pop" | "word-pop" | "minimal"
+    clipLength:    get("CLIP_LENGTH"),    // "15-30s" | "30-60s" | "60-90s" | "any"
+    contentType:   get("CONTENT_TYPE"),   // "solo" | "interview" | "presentation" | "auto"
+    referenceUrl:  get("REFERENCE_CLIP"),
+  };
+}
+
 function processArgs(project, footagePath, label) {
   const intake = project.intake_data || {};
+
+  // Parse structured brief from clip_goal if it contains brief directives
+  const rawBrief = intake.clipGoal || intake.clip_goal || intake.userDirective || "";
+  const brief = parseBrief(rawBrief);
+
+  // Build notes — directive goes first, then any legacy context fields
   const notes = [
-    project.prompt,
+    brief.directive || rawBrief, // user's free-text prompt
+    brief.referenceUrl ? `STYLE REFERENCE: ${brief.referenceUrl}` : null,
+    brief.clipLength && brief.clipLength !== "any"
+      ? `CLIP LENGTH CONSTRAINT: All clips must be ${brief.clipLength}. Hard cap — reject anything outside this range.`
+      : null,
+    project.prompt !== rawBrief ? project.prompt : null, // avoid duplicating if same text
     intake.notes,
     intake.business,
     intake.offer,
     intake.audience,
   ].filter(Boolean).join("\n\n");
 
+  // Map brief contentType → process.mjs --type flag
+  const contentTypeMap = { auto: null, solo: "solo", interview: "interview", presentation: "presentation" };
+  const resolvedType = contentTypeMap[brief.contentType] || intake.content_type || intake.contentType || "solo";
+
   const command = [
     "scripts/process.mjs",
     "--footage", footagePath,
-    "--type", intake.content_type || intake.contentType || "solo",
-    "--goal", intake.goal || "short",
-    "--style", intake.style || "natural",
-    "--label", label,
+    "--type",   resolvedType,
+    "--goal",   intake.goal || "short",
+    "--style",  intake.style || "natural",
+    "--label",  label,
   ];
 
   if (notes) command.push("--notes", notes);
   if (intake.subject) command.push("--subject", intake.subject);
-  if (intake.caption_style) command.push("--caption-style", intake.caption_style);
+
+  // Brief-driven flags — these override defaults
+  const captionStyle = brief.captionStyle || intake.caption_style || "bold-pop";
+  if (brief.captions === "off") {
+    command.push("--no-captions");
+  } else {
+    command.push("--caption-style", captionStyle);
+  }
+
+  if (brief.jumpCuts === "none") command.push("--no-jump-cuts");
+
   if (intake.ai_provider || aiProvider) command.push("--ai-provider", intake.ai_provider || aiProvider);
   if (noRender) command.push("--no-render");
 
