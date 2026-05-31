@@ -10,7 +10,7 @@ const FLOW_COPY = {
     questions: [
       { key: 'footageType', prompt: 'What kind of footage do you have?' },
       { key: 'footageAccess', prompt: 'Where is the footage located? You can paste a YouTube, Drive, Dropbox, upload, or local file link.' },
-      { key: 'clipGoal', prompt: 'What kind of clips do you want?' },
+      { key: 'clipGoal', prompt: 'Now build your editing brief — this tells the AI exactly how to cut your video.', isBrief: true },
       { key: 'ongoingNeed', prompt: 'Is this a one-time test, or do you have ongoing clipping needs like podcasts, weekly videos, social growth, or agency/client work?' },
       { key: 'name', prompt: 'What is your name?', contact: 'name' },
       { key: 'email', prompt: 'What email should we use?', contact: 'email' },
@@ -160,6 +160,163 @@ const KLIPITGOOD_PLANS = [
   }
 ];
 
+// ─── Serialize brief into a structured string the worker can parse ─────────────
+export function serializeBrief(brief) {
+  const lines = [];
+  if (brief.directive) lines.push(`DIRECTIVE: ${brief.directive}`);
+  if (brief.jumpCuts === 'none') lines.push('JUMP_CUTS: none');
+  if (brief.captions === 'off') lines.push('CAPTIONS: off');
+  if (brief.captionStyle && brief.captions !== 'off') lines.push(`CAPTION_STYLE: ${brief.captionStyle}`);
+  if (brief.clipLength && brief.clipLength !== 'any') lines.push(`CLIP_LENGTH: ${brief.clipLength}`);
+  if (brief.contentType && brief.contentType !== 'auto') lines.push(`CONTENT_TYPE: ${brief.contentType}`);
+  if (brief.referenceUrl) lines.push(`REFERENCE_CLIP: ${brief.referenceUrl}`);
+  return lines.join('\n');
+}
+
+function ClipBrief({ onSubmit }) {
+  const [brief, setBrief] = useState({
+    directive: '',
+    jumpCuts: 'allow',
+    captions: 'on',
+    captionStyle: 'bold-pop',
+    clipLength: 'any',
+    contentType: 'auto',
+    referenceUrl: '',
+  });
+
+  function set(key, val) { setBrief(b => ({ ...b, [key]: val })); }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    const serialized = serializeBrief(brief);
+    onSubmit(serialized || 'Best clips, default settings.');
+  }
+
+  const chipActive = 'brief-chip active';
+  const chip = 'brief-chip';
+
+  return (
+    <form className="clip-brief" onSubmit={handleSubmit}>
+      <div className="brief-section">
+        <label className="brief-label">Your editing prompt <span className="brief-hint">tell the AI what to find</span></label>
+        <textarea
+          className="brief-textarea"
+          placeholder={`Examples:\n• "Find the funniest moments under 45 seconds"\n• "Focus only on business advice clips"\n• "Short punchy hooks, strong opinions only"\n• "Find any moments about faith or family"`}
+          value={brief.directive}
+          onChange={e => set('directive', e.target.value)}
+          rows={4}
+        />
+      </div>
+
+      <div className="brief-row">
+        <div className="brief-section">
+          <label className="brief-label">Jump cuts</label>
+          <div className="brief-chips">
+            <button type="button" className={brief.jumpCuts === 'allow' ? chipActive : chip} onClick={() => set('jumpCuts', 'allow')}>
+              ✂️ Allow cuts
+            </button>
+            <button type="button" className={brief.jumpCuts === 'none' ? chipActive : chip} onClick={() => set('jumpCuts', 'none')}>
+              🔒 No jump cuts
+            </button>
+          </div>
+          {brief.jumpCuts === 'none' && (
+            <p className="brief-note">Each clip will be a single continuous take. Pauses stay in.</p>
+          )}
+        </div>
+
+        <div className="brief-section">
+          <label className="brief-label">Captions</label>
+          <div className="brief-chips">
+            <button type="button" className={brief.captions === 'on' ? chipActive : chip} onClick={() => set('captions', 'on')}>
+              📝 Captions on
+            </button>
+            <button type="button" className={brief.captions === 'off' ? chipActive : chip} onClick={() => set('captions', 'off')}>
+              🚫 No captions
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {brief.captions === 'on' && (
+        <div className="brief-section">
+          <label className="brief-label">Caption style</label>
+          <div className="brief-chips">
+            {[
+              { id: 'bold-pop', label: '🔥 Bold Pop', desc: 'White pill, red active word' },
+              { id: 'word-pop', label: '💥 Word Pop', desc: 'Word-by-word reveal' },
+              { id: 'minimal', label: '✨ Minimal', desc: 'Small white text, bottom' },
+            ].map(s => (
+              <button
+                type="button"
+                key={s.id}
+                className={brief.captionStyle === s.id ? chipActive : chip}
+                onClick={() => set('captionStyle', s.id)}
+                title={s.desc}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="brief-row">
+        <div className="brief-section">
+          <label className="brief-label">Clip length</label>
+          <div className="brief-chips">
+            {[
+              { id: 'any', label: 'Any length' },
+              { id: '15-30s', label: '15–30s' },
+              { id: '30-60s', label: '30–60s' },
+              { id: '60-90s', label: '60–90s' },
+            ].map(l => (
+              <button type="button" key={l.id} className={brief.clipLength === l.id ? chipActive : chip} onClick={() => set('clipLength', l.id)}>
+                {l.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="brief-section">
+          <label className="brief-label">Content type</label>
+          <div className="brief-chips">
+            {[
+              { id: 'auto', label: '🤖 Auto-detect' },
+              { id: 'solo', label: '🎤 Solo / Monologue' },
+              { id: 'interview', label: '🎙️ Interview' },
+              { id: 'presentation', label: '📊 Presentation' },
+            ].map(t => (
+              <button type="button" key={t.id} className={brief.contentType === t.id ? chipActive : chip} onClick={() => set('contentType', t.id)}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="brief-section">
+        <label className="brief-label">
+          Reference clip <span className="brief-hint">optional — paste a YouTube URL of a clip you like</span>
+        </label>
+        <input
+          type="url"
+          className="brief-input"
+          placeholder="https://youtube.com/watch?v=..."
+          value={brief.referenceUrl}
+          onChange={e => set('referenceUrl', e.target.value)}
+        />
+        {brief.referenceUrl && (
+          <p className="brief-note">The AI will use the style and structure of this clip as a reference.</p>
+        )}
+      </div>
+
+      <button type="submit" className="brief-submit">
+        Set my brief → start clipping
+      </button>
+    </form>
+  );
+}
+
 function classifyIntent(text) {
   const value = text.toLowerCase();
   if (/(clip|clips|video|podcast|reel|tiktok|short|youtube|footage|edit)/.test(value)) return 'video_clipping';
@@ -253,7 +410,15 @@ function PortalPage() {
 
   function startFlow(nextFlowId) {
     const flow = FLOW_COPY[nextFlowId];
-    setInput(`I need help with ${flow.label.toLowerCase()}.`);
+    setFlowId(nextFlowId);
+    setStepIndex(0);
+    setAnswers({});
+    setMessages(current => [
+      ...current,
+      normalizeMessage('user', `I want help with: ${flow.label}`),
+      normalizeMessage('assistant', flow.intro),
+      normalizeMessage('assistant', flow.questions[0].prompt),
+    ]);
   }
 
   function resetChat() {
@@ -443,10 +608,34 @@ function PortalPage() {
     if (!canSend) return;
 
     const value = input.trim();
+    setInput('');
+
+    // ── Local guided flow (no backend needed) ──────────────────────────────
+    if (flowId && currentQuestion && !currentQuestion.isBrief) {
+      const nextAnswers = { ...answers, [currentQuestion.key]: value };
+      if (currentQuestion.contact) {
+        setContact(c => ({ ...c, [currentQuestion.contact]: value }));
+      }
+      setAnswers(nextAnswers);
+      setMessages(current => [...current, normalizeMessage('user', value)]);
+
+      const flow = FLOW_COPY[flowId];
+      const nextStep = stepIndex + 1;
+
+      if (nextStep < flow.questions.length) {
+        setStepIndex(nextStep);
+        const nextQ = flow.questions[nextStep];
+        setMessages(current => [...current, normalizeMessage('assistant', nextQ.prompt)]);
+      } else {
+        submitPortal(nextAnswers, contact, [...messages, normalizeMessage('user', value)]).catch(err => {
+          setStatus({ type: 'error', message: err.message });
+        });
+      }
+      return;
+    }
+
     const userMessage = normalizeMessage('user', value);
     const nextMessages = [...messages, userMessage];
-
-    setInput('');
     setMessages(nextMessages);
     setStatus({ type: 'submitting', message: 'UNSERGPT is thinking...' });
 
@@ -621,22 +810,49 @@ function PortalPage() {
           </div>
         </section>
 
-        <form className="composer" onSubmit={sendMessage}>
-          {currentQuestion?.key === 'footageAccess' && (
-            <label className="upload-chip">
-              Upload video
-              <input type="file" accept="video/*" onChange={uploadFootage} disabled={status.type === 'submitting' || uploadStatus.type === 'submitting'} />
-            </label>
-          )}
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            placeholder={flowId ? 'Reply here...' : 'Tell UNSERGPT what you need...'}
-            rows="1"
-            disabled={status.type === 'submitting'}
-          />
-          <button type="submit" disabled={!canSend}>Send</button>
-        </form>
+        {currentQuestion?.isBrief ? (
+          <div className="brief-wrapper">
+            <ClipBrief onSubmit={(briefText) => {
+              setInput(briefText);
+              // Auto-advance: set answers and move to next question
+              const nextAnswers = { ...answers, [currentQuestion.key]: briefText };
+              setAnswers(nextAnswers);
+              setMessages(current => [
+                ...current,
+                normalizeMessage('assistant', currentQuestion.prompt),
+                normalizeMessage('user', '(Brief set — see details above)'),
+              ]);
+              const nextStep = stepIndex + 1;
+              const flow = FLOW_COPY[flowId];
+              if (nextStep < flow.questions.length) {
+                setStepIndex(nextStep);
+                const next = flow.questions[nextStep];
+                setMessages(current => [...current, normalizeMessage('assistant', next.prompt)]);
+              } else {
+                submitPortal(nextAnswers, contact, [...messages]).catch(err => {
+                  setStatus({ type: 'error', message: err.message });
+                });
+              }
+            }} />
+          </div>
+        ) : (
+          <form className="composer" onSubmit={sendMessage}>
+            {currentQuestion?.key === 'footageAccess' && (
+              <label className="upload-chip">
+                Upload video
+                <input type="file" accept="video/*" onChange={uploadFootage} disabled={status.type === 'submitting' || uploadStatus.type === 'submitting'} />
+              </label>
+            )}
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={flowId ? 'Reply here...' : 'Tell UNSERGPT what you need...'}
+              rows="1"
+              disabled={status.type === 'submitting'}
+            />
+            <button type="submit" disabled={!canSend}>Send</button>
+          </form>
+        )}
       </main>
     </div>
   );
