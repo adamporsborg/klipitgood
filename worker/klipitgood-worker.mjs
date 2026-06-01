@@ -255,7 +255,7 @@ function processArgs(project, footagePath, label) {
   const resolvedType = contentTypeMap[brief.contentType] || intake.content_type || intake.contentType || "solo";
 
   const command = [
-    "scripts/process.mjs",
+    "worker/process.mjs",
     "--footage", footagePath,
     "--type",   resolvedType,
     "--goal",   intake.goal || "short",

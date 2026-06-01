@@ -67,6 +67,7 @@ const scaleArg     = parseFloat(get("--scale", "1.10"));
 const noRender     = has("--no-render");
 const redetect     = has("--redetect");
 const noCaptions   = has("--no-captions");
+const noJumpCuts   = has("--no-jump-cuts");  // collapse multi-segment clips to single continuous take
 const captionStyle = get("--caption-style", "bold-pop");
 const aiProvider = get("--ai-provider", process.env.KLIPITGOOD_AI_PROVIDER || "anthropic");
 const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-pro";
@@ -282,9 +283,17 @@ EDITING STYLE: Natural.
       "CONTENT TYPE: Presentation/keynote. Keep transitions between points smooth. Remove audience noise, coughs, dead air." :
       "CONTENT TYPE: Solo talking head / monologue. Speaker is the only voice.";
 
-  const notesLine = notes ? `\nADDITIONAL CONTEXT FROM CLIENT: ${notes}` : "";
+  const jumpCutRule = noJumpCuts
+    ? `\n\nNO JUMP CUTS MODE: Each clip must use EXACTLY ONE segment (a single continuous take). Do NOT split segments to remove pauses — set each clip's segments array to a single { start, end } object. Pauses stay in. Pick timestamps where the speech flows naturally from start to end without needing any cuts.`
+    : "";
 
-  return `You are a senior short-form video editor with a decade of experience cutting viral content for TikTok, Instagram Reels, and YouTube Shorts. You think like a creator, not a transcription service.
+  const notesLine = notes
+    ? `\n\n━━━ USER DIRECTIVE (HIGHEST PRIORITY — follow this exactly) ━━━\n${notes}\n\nThis is what the user specifically asked for. Override your default clip selection strategy if needed to satisfy this directive. If they said "funny moments", find comedy. If they said "under 30 seconds", hard-cap all clips at 30s. If they said "focus on business advice", ignore anything off-topic. Take this literally.${jumpCutRule}`
+    : jumpCutRule
+      ? `\n\n━━━ RENDERING CONSTRAINT ━━━${jumpCutRule}`
+      : "";
+
+  return `You are a senior short-form video editor with a decade of experience cutting viral content for TikTok, Instagram Reels, and YouTube Shorts. You think like a creator, not a transcription service. You work on all kinds of video: podcasts, interviews, speeches, fitness content, comedy, educational content, business advice, news commentary, and more.
 
 Your sole output is a single valid JSON object. Return ONLY raw JSON — no markdown fences, no prose, no explanation.
 
@@ -575,7 +584,26 @@ const clips = (parsed.clips ?? []).map(c => ({ ...c, id: c.id.replace(/_/g, "-")
 let rendered = 0;
 const deliveryFiles = [];
 
-for (const clip of clips) {
+for (let clip of clips) {
+  // ── No-jump-cuts enforcement ──────────────────────────────────────────────
+  // Collapse all segments to a single continuous span: first start → last end.
+  // Pauses stay in. The clip plays as a natural take with no stitching.
+  if (noJumpCuts && clip.segments && clip.segments.length > 1) {
+    const spanStart = clip.segments[0].start;
+    const spanEnd   = clip.segments[clip.segments.length - 1].end;
+    clip = {
+      ...clip,
+      segments: [{ start: spanStart, end: spanEnd }],
+      zoomKeyframes: [
+        { t: 0,                           scale: BASE_SCALE },
+        { t: (spanEnd - spanStart) * 0.3, scale: BASE_SCALE + 0.04 },
+        { t: (spanEnd - spanStart) * 0.7, scale: BASE_SCALE + 0.04 },
+        { t: (spanEnd - spanStart),       scale: BASE_SCALE },
+      ],
+    };
+    console.log(`  ℹ️  no-jump-cuts: collapsed to single take [${spanStart.toFixed(1)}s → ${spanEnd.toFixed(1)}s]`);
+  }
+
   const safeName = clip.title.replace(/[^a-z0-9]/gi, "_").toLowerCase().slice(0, 50);
   const baseName = `${label}_${clip.id}_${safeName}`;
   const version = versions[baseName] ? (versions[baseName].version ?? 1) + 1 : 2;
