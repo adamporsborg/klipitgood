@@ -41,10 +41,16 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          KLIPITGOOD_PROJECT_ID: ${{ github.event.client_payload.project_id || inputs.project_id }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           KLIPITGOOD_ENGINE_ROOT: ${{ github.workspace }}
           NODE_ENV: production
-        run: node worker/klipitgood-worker.mjs
+        run: |
+          PROJECT_ID="${{ github.event.client_payload.project_id || inputs.project_id }}"
+          if [ -n "$PROJECT_ID" ]; then
+            node worker/klipitgood-worker.mjs --project "$PROJECT_ID"
+          else
+            node worker/klipitgood-worker.mjs --once
+          fi
 
       - name: Upload logs on failure
         if: failure()
