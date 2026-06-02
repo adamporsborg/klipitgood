@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import AuthPage from './AuthPage.jsx';
+import { supabase } from './supabase.js';
 
 const FLOW_COPY = {
   video_clipping: {
     label: 'Get my videos clipped',
     icon: '🎬',
     toolName: 'KlipItGood',
-    intro: 'Great choice. KlipItGood is the video clipping service inside UNSERGPT. I will ask for the footage, clip direction, and contact info.',
-    confirmation: "We've got your request. Adam / the UNSER team will review this and follow up.",
+    intro: 'Great choice. I will help you turn the footage into short-form clips with a clear editing brief, captions, and a posting plan.',
+    confirmation: "We've got your clipping request. KlipItGood will review it and start the clipping flow.",
     questions: [
       { key: 'footageType', prompt: 'What kind of footage do you have?' },
       { key: 'footageAccess', prompt: 'Where is the footage located? You can paste a YouTube, Drive, Dropbox, upload, or local file link.' },
@@ -38,7 +40,7 @@ const FLOW_COPY = {
     icon: '🤔',
     toolName: 'Front Desk',
     intro: 'No problem. I will run a quick diagnostic and route the request.',
-    confirmation: 'Got it. Adam / the UNSER team will review this and point you toward the right next step.',
+    confirmation: 'Got it. KlipItGood will review this and point you toward the right next step.',
     questions: [
       { key: 'accomplish', prompt: 'What are you trying to accomplish?' },
       { key: 'brokenSlow', prompt: 'What feels broken or slow in your business right now?' },
@@ -50,12 +52,12 @@ const FLOW_COPY = {
   }
 };
 
-const STARTERS = Object.entries(FLOW_COPY).map(([id, flow]) => ({ id, label: flow.label, icon: flow.icon }));
+const STARTERS = [{ id: 'video_clipping', label: FLOW_COPY.video_clipping.label, icon: FLOW_COPY.video_clipping.icon }];
 
-const TOOLS = ['KlipItGood clipping', 'Logo cleanup', 'Strategy brief', 'AI workflow audit', 'Book a call'];
+const TOOLS = ['Upload footage', 'Clip strategy', 'Style kit', 'Prompted edits', 'Downloads'];
 
 const SEED_CONVERSATIONS = [
-  { title: 'New intake', meta: 'UNSERGPT ready', icon: '💬' },
+  { title: 'New project', meta: 'Ready to clip', icon: '💬' },
   { title: 'Command center', meta: 'Progress', icon: '📊' },
   { title: 'KlipItGood clipping', meta: 'Lead capture', icon: '🎬' },
   { title: 'Strategy inquiry', meta: 'Discovery', icon: '📣' }
@@ -73,14 +75,14 @@ const PROJECTS = [
     name: 'Ward 6 content sprint',
     status: 'Review',
     progress: 68,
-    owner: 'UNSER + Adam',
+    owner: 'KlipItGood',
     next: 'Approve selects and package final reels'
   },
   {
-    name: 'UNSERGPT front desk',
+    name: 'KlipItGood clipping app',
     status: 'Build',
     progress: 62,
-    owner: 'UnserGPT',
+    owner: 'KlipItGood',
     next: 'Connect live database, email, and handoff routing'
   },
   {
@@ -112,7 +114,7 @@ const BUILD_STAGES = [
   'Capture the request',
   'Classify service type',
   'Create lead and project record',
-  'Notify Adam / UNSER',
+  'Notify KlipItGood',
   'Assign tools or manual help',
   'Review deliverables',
   'Ship and follow up'
@@ -120,43 +122,43 @@ const BUILD_STAGES = [
 
 const PRICING_TIERS = [
   {
-    name: 'UNSERGPT Front Desk',
-    price: 'Configured per client',
-    fit: 'Small businesses that need a smart intake and lead-routing assistant.',
-    includes: 'Branded chat portal, lead capture, email alerts, service routing, basic dashboard.'
+    name: 'Founding 50 Unlimited',
+    price: '$199/year',
+    fit: 'Creators and businesses that want unlimited clipping locked in during launch.',
+    includes: 'Unlimited clipping, prompt-based edits, saved styles, project memory, and locked founding pricing.'
   },
   {
-    name: 'UNSERGPT Operator',
-    price: 'Configured per client',
-    fit: 'Companies that want UNSER to help run the workflows, not just install software.',
-    includes: 'Everything in Front Desk plus monthly strategy, content requests, review queue, and human follow-up.'
+    name: 'Unlimited Monthly',
+    price: '$29.99/month',
+    fit: 'People who want ongoing clips without paying yearly upfront.',
+    includes: 'Unlimited clipping, one active upload at a time, prompted edits, cancel anytime.'
   },
   {
-    name: 'UNSERGPT Custom OS',
-    price: 'Scoped after intake',
-    fit: 'Teams that need custom tools, automations, CRM handoffs, or internal operating dashboards.',
-    includes: 'Custom intake flows, tool integrations, deployment support, and buildout roadmap.'
+    name: '$1 Per Clip',
+    price: '$1/clip',
+    fit: 'Low-friction trial for a first video or one-off test.',
+    includes: 'Pay per delivered clip, then upgrade if the workflow fits.'
   }
 ];
 
 const KLIPITGOOD_PLANS = [
   {
-    id: 'starter',
-    name: 'KlipItGood Starter',
-    price: 'Pricing configured in Stripe',
-    summary: 'Monthly clip allowance, captions, social-ready exports, and portal access.'
+    id: 'annual_unlimited',
+    name: 'Founding 50 Unlimited',
+    price: '$199/year for life',
+    summary: 'Best launch deal: unlimited clipping, prompt-based edits, saved styles, and price locked while active.'
   },
   {
-    id: 'growth',
-    name: 'KlipItGood Growth',
-    price: 'Pricing configured in Stripe',
-    summary: 'More clips, priority processing, graphics, and enhanced support.'
+    id: 'unlimited_monthly',
+    name: 'Unlimited Monthly',
+    price: '$29.99/mo',
+    summary: 'Unlimited clipping, one active upload at a time, cancel anytime.'
   },
   {
-    id: 'operator',
-    name: 'UNSER Operator',
-    price: 'Scoped with UNSER',
-    summary: 'Done-for-you workflows, content systems, strategy, operations, and advanced AI assistance.'
+    id: 'per_clip',
+    name: '$1 Per Clip',
+    price: '$1/clip',
+    summary: 'Low-friction trial. Only pay for delivered clips you actually want.'
   }
 ];
 
@@ -331,7 +333,7 @@ function hasOngoingNeed(text) {
 const initialMessages = [
   {
     role: 'assistant',
-    content: "Hey, I'm UNSERGPT, the AI front desk for UNSER Media. What are you trying to get done today?",
+    content: "What are we klipping today? Upload a long video or tell me what kind of clips you need. I can turn one recording into hooks, captions, clip ideas, and a posting plan.",
     quickStarts: true
   }
 ];
@@ -361,14 +363,14 @@ function newChatRecord(title = 'New chat') {
 }
 
 function getAnonymousSessionId() {
-  const existing = window.localStorage.getItem('unsergpt_session_id');
+  const existing = window.localStorage.getItem('klipitgood_session_id');
   if (existing) return existing;
   const next = `anon_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  window.localStorage.setItem('unsergpt_session_id', next);
+  window.localStorage.setItem('klipitgood_session_id', next);
   return next;
 }
 
-function PortalPage() {
+function PortalPage({ user, onSignOut }) {
   const [anonymousSessionId] = useState(getAnonymousSessionId);
   const [chats, setChats] = useState(() => [newChatRecord()]);
   const [activeChatId, setActiveChatId] = useState(() => chats[0]?.id);
@@ -382,6 +384,61 @@ function PortalPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [savedSubmission, setSavedSubmission] = useState(null);
   const [projectResult, setProjectResult] = useState(null);
+
+  // ── Real Supabase project list (only when logged in) ──────────────────────
+  const [supabaseProjects, setSupabaseProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+
+  const loadSupabaseProjects = useCallback(async () => {
+    if (!user || !supabase) return;
+    const { data } = await supabase
+      .from('projects')
+      .select('id, title, status, created_at, admin_message')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (data) setSupabaseProjects(data);
+  }, [user]);
+
+  useEffect(() => { loadSupabaseProjects(); }, [loadSupabaseProjects]);
+
+  // Live status updates via Supabase realtime
+  useEffect(() => {
+    if (!user || !supabase) return;
+    const channel = supabase
+      .channel('project-status')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'projects',
+        filter: `user_id=eq.${user.id}`,
+      }, (payload) => {
+        setSupabaseProjects(prev =>
+          prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p)
+        );
+        // If this project is currently being watched, refresh its result
+        if (payload.new.id === selectedProjectId) {
+          loadSelectedProject(payload.new.id);
+        }
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [user, selectedProjectId]); // eslint-disable-line
+
+  async function loadSelectedProject(projectId) {
+    if (!supabase) return;
+    const [{ data: project }, { data: clips }] = await Promise.all([
+      supabase.from('projects').select('*').eq('id', projectId).single(),
+      supabase.from('clips').select('*').eq('project_id', projectId).order('score', { ascending: false }),
+    ]);
+    if (project) setProjectResult({ project, clips: clips || [] });
+  }
+
+  function selectProject(projectId) {
+    setSelectedProjectId(projectId);
+    loadSelectedProject(projectId);
+  }
+
   const scroller = useRef(null);
   const activeChat = chats.find((chat) => chat.id === activeChatId) || chats[0];
   const messages = activeChat?.messages || initialMessages;
@@ -401,7 +458,7 @@ function PortalPage() {
   const conversationTitle = activeChat?.title || activeFlow?.label || 'New chat';
 
   useEffect(() => {
-    document.title = 'UNSER Media Portal';
+    document.title = 'KlipItGood';
   }, []);
 
   useEffect(() => {
@@ -418,6 +475,17 @@ function PortalPage() {
       normalizeMessage('user', `I want help with: ${flow.label}`),
       normalizeMessage('assistant', flow.intro),
       normalizeMessage('assistant', flow.questions[0].prompt),
+    ]);
+  }
+
+  function showPricing() {
+    setMessages((current) => [
+      ...current,
+      normalizeMessage(
+        'assistant',
+        'Here is the launch offer. If you want the fastest path, pick the founding year: it locks in unlimited clipping while this is still priced for launch users.',
+        { plans: true }
+      )
     ]);
   }
 
@@ -439,7 +507,7 @@ function PortalPage() {
 
   function renameChat(chatId) {
     const current = chats.find((chat) => chat.id === chatId);
-    const title = window.prompt('Rename chat', current?.title || 'UNSERGPT chat');
+    const title = window.prompt('Rename project', current?.title || 'KlipItGood project');
     if (!title?.trim()) return;
     setChats((items) => items.map((chat) => (
       chat.id === chatId ? { ...chat, title: title.trim().slice(0, 80) } : chat
@@ -499,9 +567,17 @@ function PortalPage() {
   async function submitPortal(nextAnswers, nextContact, finalMessages) {
     setStatus({ type: 'submitting', message: 'Saving your request...' });
 
+    // Get auth token if logged in so the server can attach user_id to the project
+    const authToken = supabase
+      ? (await supabase.auth.getSession()).data.session?.access_token
+      : null;
+
     const response = await fetch('/api/portal/submit', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
       body: JSON.stringify({
         requestType: flowId,
         answers: nextAnswers,
@@ -516,7 +592,7 @@ function PortalPage() {
 
     const emailNote = result.notification?.sent
       ? ''
-      : '\n\nThe request was saved, but the notification email did not send. Adam can still review it in Supabase.';
+      : '\n\nThe request was saved, but the notification email did not send. It can still be reviewed in Supabase.';
 
     setStatus({
       type: result.notification?.sent ? 'success' : 'warning',
@@ -525,6 +601,9 @@ function PortalPage() {
     setSavedSubmission(result);
     if (result.queuedProject) {
       setProjectResult({ project: result.queuedProject, clips: [] });
+      setSelectedProjectId(result.queuedProject.id);
+      // Refresh sidebar project list
+      loadSupabaseProjects();
     }
 
     const freeClipOffer = flowId === 'video_clipping'
@@ -561,13 +640,14 @@ function PortalPage() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not prepare checkout.');
-      setStatus({ type: 'success', message: result.checkout.provider === 'stripe' ? 'Checkout prepared.' : 'Plan intent saved.' });
+      const hasCheckoutLink = ['stripe', 'stripe_payment_link'].includes(result.checkout.provider);
+      setStatus({ type: 'success', message: hasCheckoutLink ? 'Checkout prepared.' : 'Plan intent saved.' });
       setMessages((current) => [
         ...current,
         normalizeMessage('user', `I want ${result.checkout.plan.name}.`),
         normalizeMessage(
           'assistant',
-          result.checkout.provider === 'stripe'
+          hasCheckoutLink
             ? `Good. I prepared the ${result.checkout.plan.name} checkout path and attached it to your request.`
             : `Good. I saved ${result.checkout.plan.name} on your request. Stripe is not live in this workspace yet, so this uses a safe placeholder link for Adam to finish the subscription setup.`,
           { checkout: result.checkout }
@@ -637,22 +717,22 @@ function PortalPage() {
     const userMessage = normalizeMessage('user', value);
     const nextMessages = [...messages, userMessage];
     setMessages(nextMessages);
-    setStatus({ type: 'submitting', message: 'UNSERGPT is thinking...' });
+    setStatus({ type: 'submitting', message: 'KlipItGood is thinking...' });
 
     try {
-      const response = await fetch('/api/unsergpt/chat', {
+      const response = await fetch('/api/klipitgood/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: nextMessages.map(({ role, content }) => ({ role, content })),
           conversationId: activeChat?.conversationId,
           anonymousSessionId,
-          currentTool: activeFlow?.toolName || 'UNSERGPT portal',
+          currentTool: activeFlow?.toolName || 'KlipItGood app',
           contact
         })
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'UNSERGPT could not respond.');
+      if (!response.ok) throw new Error(result.error || 'KlipItGood could not respond.');
 
       setContact((current) => ({ ...current, ...(result.lead || {}), ...(result.contact || {}) }));
       if (result.serviceRequest || result.lead) {
@@ -680,7 +760,7 @@ function PortalPage() {
       ]);
       setStatus({
         type: result.notification?.sent || result.notification?.saved ? 'success' : 'idle',
-        message: result.notification?.sent ? 'Adam / UNSER has been notified.' : ''
+        message: result.notification?.sent ? 'KlipItGood has been notified.' : ''
       });
     } catch (error) {
       setStatus({ type: 'error', message: error.message });
@@ -695,27 +775,50 @@ function PortalPage() {
     <div className="portal-shell">
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="brand-block">
-          <span className="brand-mark unser-logo">U</span>
+          <span className="brand-mark clipper-logo">✂</span>
           <div>
-            <strong>UNSERGPT</strong>
-            <span>by UNSER Media</span>
+            <strong>KlipItGood</strong>
+            <span>by Unser.Media</span>
           </div>
         </div>
 
-        <button className="new-chat" type="button" onClick={resetChat}>+ New Chat</button>
-        <a className="command-link" href="/dashboard">Open Command Center</a>
+        <button className="new-chat" type="button" onClick={resetChat}>+ New Project</button>
 
-        <nav className="conversation-list" aria-label="Conversations and projects">
+        {/* ── Real projects from Supabase (logged-in users) ── */}
+        {user && supabaseProjects.length > 0 && (
+          <nav className="conversation-list" aria-label="Your projects">
+            <p className="sidebar-section-label">Your projects</p>
+            {supabaseProjects.map((project) => (
+              <div className="conversation-row" key={project.id}>
+                <button
+                  className={project.id === selectedProjectId ? 'active' : ''}
+                  type="button"
+                  onClick={() => selectProject(project.id)}
+                >
+                  <span>
+                    {project.status === 'completed' ? '✅' : project.status === 'processing' ? '⚙️' : project.status === 'failed' ? '❌' : '🎬'}{' '}
+                    {project.title}
+                  </span>
+                  <small className={`status-badge status-${project.status}`}>{project.status}</small>
+                </button>
+              </div>
+            ))}
+          </nav>
+        )}
+
+        {/* ── Local chats (anonymous or in-session) ── */}
+        <nav className="conversation-list" aria-label="Local chats">
+          {user && <p className="sidebar-section-label">Current session</p>}
           {chats.filter((chat) => !chat.archived).map((chat) => (
             <div className="conversation-row" key={chat.id}>
-              <button className={chat.id === activeChatId ? 'active' : ''} type="button" onClick={() => setActiveChatId(chat.id)}>
+              <button className={chat.id === activeChatId && !selectedProjectId ? 'active' : ''} type="button" onClick={() => { setActiveChatId(chat.id); setSelectedProjectId(null); setProjectResult(null); }}>
                 <span>💬 {chat.title}</span>
-                <small>{chat.conversationId ? 'Saved' : 'Local chat'}</small>
+                <small>{chat.conversationId ? 'Saved' : 'Local'}</small>
               </button>
               <div className="conversation-actions">
-                <button type="button" onClick={() => renameChat(chat.id)} aria-label="Rename chat">Rename</button>
-                <button type="button" onClick={() => archiveChat(chat.id)} aria-label="Archive chat">Archive</button>
-                <button type="button" onClick={() => deleteChat(chat.id)} aria-label="Delete chat">Delete</button>
+                <button type="button" onClick={() => renameChat(chat.id)} aria-label="Rename">Rename</button>
+                <button type="button" onClick={() => archiveChat(chat.id)} aria-label="Archive">Archive</button>
+                <button type="button" onClick={() => deleteChat(chat.id)} aria-label="Delete">Delete</button>
               </div>
             </div>
           ))}
@@ -727,6 +830,18 @@ function PortalPage() {
             <button type="button" key={tool}>{tool}</button>
           ))}
         </div>
+
+        {/* ── User account block at bottom ── */}
+        <div className="sidebar-user-block">
+          {user ? (
+            <>
+              <span className="sidebar-user-email">{user.email}</span>
+              <button type="button" className="sidebar-signout" onClick={onSignOut}>Sign out</button>
+            </>
+          ) : (
+            <a href="/auth" className="sidebar-signin-link">Sign in to save projects</a>
+          )}
+        </div>
       </aside>
 
       <main className="chat-main">
@@ -737,17 +852,26 @@ function PortalPage() {
             <span />
           </button>
           <div>
-            <strong>UnserGPT</strong>
-            <span>{activeFlow?.toolName || conversationTitle}</span>
+            <strong>KlipItGood</strong>
+            <span>{activeFlow?.toolName || 'AI-powered short-form editor'}</span>
           </div>
-          <a href="/admin">Admin</a>
+          <div className="topbar-right">
+            <button className="topbar-link" type="button" onClick={showPricing}>Pricing</button>
+            {user ? (
+              <button className="topbar-link topbar-user" type="button" onClick={onSignOut} title="Sign out">
+                {user.email?.split('@')[0]}
+              </button>
+            ) : (
+              <a className="topbar-link topbar-signin" href="/auth">Sign in</a>
+            )}
+          </div>
         </header>
 
         <section className="chat-panel" ref={scroller} aria-live="polite">
           <div className="chat-inner">
             {messages.map((message) => (
               <article className={`message ${message.role}`} key={message.id || message.content}>
-                <div className="avatar">{message.role === 'user' ? 'You' : 'U'}</div>
+                <div className="avatar">{message.role === 'user' ? 'You' : 'K'}</div>
                 <div className="bubble">
                   <p>{message.content}</p>
                   {message.quickStarts && (
@@ -761,7 +885,7 @@ function PortalPage() {
                   )}
                   {message.actions && (
                     <div className="quick-starts">
-                      <a href="mailto:adamporsborg@gmail.com?subject=UNSER%20Media%20strategy%20call">Book a 15-20 minute call</a>
+                      <a href="mailto:adamporsborg@gmail.com?subject=KlipItGood%20strategy%20call">Book a 15-20 minute call</a>
                       <button type="button" onClick={() => setInput('I would rather leave a message: ')}>
                         Leave a message
                       </button>
@@ -794,9 +918,6 @@ function PortalPage() {
                         Keep chatting
                       </button>
                     </div>
-                  )}
-                  {message.plans && projectResult?.project && (
-                    <ProjectResultPanel result={projectResult} />
                   )}
                 </div>
               </article>
@@ -846,7 +967,7 @@ function PortalPage() {
             <textarea
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder={flowId ? 'Reply here...' : 'Tell UNSERGPT what you need...'}
+              placeholder={flowId ? 'Reply here...' : 'Tell KlipItGood what to clip...'}
               rows="1"
               disabled={status.type === 'submitting'}
             />
@@ -854,7 +975,60 @@ function PortalPage() {
           </form>
         )}
       </main>
+      <ClipPreviewRail result={projectResult} />
     </div>
+  );
+}
+
+function ClipPreviewRail({ result }) {
+  const clips = result?.clips || [];
+  const project = result?.project || null;
+
+  return (
+    <aside className="clip-preview-rail" aria-label="Clip previews">
+      <div className="clip-preview-head">
+        <span>Clip previews</span>
+        <strong>{project?.status || 'Waiting'}</strong>
+      </div>
+
+      {!project && (
+        <div className="preview-empty">
+          <strong>Clips will appear here.</strong>
+          <p>Upload footage, set a brief, and KlipItGood will show previews, versions, downloads, and edit prompts in this panel.</p>
+        </div>
+      )}
+
+      {project && clips.length === 0 && (
+        <div className="preview-empty">
+          <strong>{project.title}</strong>
+          <p>{result?.error || project.admin_message || 'Your clipping job is queued. Preview clips will appear here when the worker finishes.'}</p>
+        </div>
+      )}
+
+      {clips.length > 0 && (
+        <div className="preview-list">
+          {clips.map((clip) => (
+            <article className="preview-card" key={clip.id || clip.download_url}>
+              <div className="preview-video">
+                {clip.preview_url ? (
+                  <video src={clip.preview_url} controls playsInline preload="metadata" />
+                ) : (
+                  <span>Preview</span>
+                )}
+              </div>
+              <strong>{clip.title}</strong>
+              <small>{clip.score ? `${Math.round(Number(clip.score))}/100` : 'Ready'} {clip.duration_seconds ? `- ${clip.duration_seconds}s` : ''}</small>
+              {clip.description && <p>{clip.description}</p>}
+              <div className="preview-actions">
+                {clip.download_url && <a href={clip.download_url} download>Download</a>}
+                <button type="button">Use style</button>
+                <button type="button">Change</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -901,7 +1075,7 @@ function ProjectResultPanel({ result }) {
 
 function DashboardPage() {
   useEffect(() => {
-    document.title = 'UNSER Command Center';
+    document.title = 'KlipItGood Command Center';
   }, []);
 
   return (
@@ -910,8 +1084,8 @@ function DashboardPage() {
         <div className="brand-block">
           <span className="brand-mark">U</span>
           <div>
-            <strong>UNSERGPT</strong>
-            <span>Client operating system</span>
+            <strong>KlipItGood</strong>
+            <span>Clipping command center</span>
           </div>
         </div>
         <nav>
@@ -925,7 +1099,7 @@ function DashboardPage() {
         <section className="dashboard-hero">
           <div>
             <p>Founder view</p>
-            <h1>The AI front desk that captures work, routes tools, and shows what is moving next.</h1>
+            <h1>The clipping command center that turns long-form footage into short-form clips.</h1>
           </div>
           <a href="/portal">Start intake</a>
         </section>
@@ -1025,7 +1199,7 @@ function DashboardPage() {
           <div className="panel-head">
             <div>
               <span>Commercial package</span>
-              <h2>How I would price UNSERGPT</h2>
+              <h2>KlipItGood launch pricing</h2>
             </div>
           </div>
           <div className="pricing-grid">
@@ -1153,9 +1327,53 @@ function AdminPage() {
 }
 
 export default function App() {
-  const isAdmin = window.location.pathname.startsWith('/admin');
-  const isDashboard = window.location.pathname.startsWith('/dashboard');
+  const path = window.location.pathname;
+  const isAdmin = path.startsWith('/admin');
+  const isDashboard = path.startsWith('/dashboard');
+  const isAuth = path.startsWith('/auth') || path.startsWith('/login') || path.startsWith('/signup');
+
+  const [session, setSession] = useState(undefined); // undefined = loading, null = signed out
+
+  useEffect(() => {
+    if (!supabase) { setSession(null); return; }
+
+    // Load existing session on mount
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session ?? null);
+    });
+
+    // Listen for sign-in / sign-out events
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession ?? null);
+    });
+
+    return () => listener?.subscription?.unsubscribe();
+  }, []);
+
+  function handleSignOut() {
+    supabase?.auth.signOut();
+  }
+
+  // While we're resolving the session, render nothing (avoids flash)
+  if (session === undefined) return null;
+
   if (isAdmin) return <AdminPage />;
   if (isDashboard) return <DashboardPage />;
-  return <PortalPage />;
+
+  if (isAuth) {
+    // Already signed in — send them to the app
+    if (session) {
+      window.location.replace('/app');
+      return null;
+    }
+    const defaultTab = path.includes('signup') ? 'signup' : 'signin';
+    return (
+      <AuthPage
+        defaultTab={defaultTab}
+        onAuth={() => window.location.replace('/app')}
+      />
+    );
+  }
+
+  return <PortalPage user={session?.user ?? null} onSignOut={handleSignOut} />;
 }
