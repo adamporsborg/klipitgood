@@ -1,10 +1,10 @@
-const SYSTEM_PROMPT = `UNSERGPT is the AI front desk and marketing operator for UNSER Media.
+const SYSTEM_PROMPT = `KlipItGood is a standalone automated short-form clipping product.
 
-It helps with KlipItGood video clipping, social media graphics, branding and design, marketing strategy, content systems, AI workflows, website/project help, team contact, billing, and deliverables.
+It helps users turn long-form footage into short-form clips, captions, hooks, posting plans, style directions, prompted edits, billing decisions, and project handoff details.
 
 Tone: human, concise, useful, consultative, sharp, not fake, not corporate, not a rigid form.
 
-Behavior: answer naturally first, ask only the next useful question, do not interrogate with long forms, do not say "as an AI", do not say prototype/test language, route requests quietly in the backend, ask for contact info only when needed, and trigger login only when the user wants to upload, generate, save, start trial, or access billing.`;
+Behavior: answer naturally first, ask only the next useful question, do not interrogate with long forms, do not say "as an AI", do not say prototype/test language, route requests quietly in the backend, ask for contact info only when needed, and trigger login only when the user wants to upload, generate, save, start a paid project, or access billing.`;
 
 const ACTIONABLE_INTENTS = new Set([
   'clipping_interest',
@@ -101,13 +101,13 @@ export function buildFallbackAssistantMessage({ detectedIntent, actionFlags = {}
   }
 
   if (detectedIntent === 'pricing_question' || actionFlags.showTrialPath) {
-    return 'KlipItGood Starter is $49/month with a 7-day free trial. If you tell me what kind of footage you have and how often you need clips, I can point you to the right path.';
+    return 'KlipItGood has three launch options: $1 per finalized edited Klip, $29.99/month unlimited, or Founding 50 Unlimited at $199/year for life while your subscription stays active. Your first finalized Klip is free.';
   }
 
   if (detectedIntent.includes('clipping')) {
     return missingFields.length
-      ? 'Yes. Tell me what the footage is from and what kind of clips you want. If you want the UNSER team to take it from there, send your name and email when ready.'
-      : 'Got it. I can route this to Adam and the UNSER team. What is the footage source and what kind of clips are you trying to get out of it?';
+      ? 'Yes. Tell me what the footage is from and what kind of clips you want. When you are ready to save the project, send your name and email.'
+      : 'Got it. What is the footage source and what kind of clips are you trying to get out of it?';
   }
 
   if (detectedIntent.includes('design')) {
@@ -119,7 +119,7 @@ export function buildFallbackAssistantMessage({ detectedIntent, actionFlags = {}
   }
 
   if (detectedIntent === 'team_contact_request' || detectedIntent === 'human_help_needed') {
-    return 'I can get this in front of Adam and the UNSER team. What should they review, and what is the best email or phone number for follow-up?';
+    return 'I can save this for review. What should be reviewed, and what is the best email or phone number for follow-up?';
   }
 
   return 'Tell me what you are trying to get done, and I will help you shape the next useful step.';
@@ -139,7 +139,7 @@ function buildOpenAiMessages(messages, intentResult, context) {
   ];
 }
 
-export async function buildUnserGptReply({ messages = [], context = {}, env = process.env, fetchImpl = fetch }) {
+export async function buildKlipItGoodReply({ messages = [], context = {}, env = process.env, fetchImpl = fetch }) {
   const latestUserMessage = lastUserContent(messages);
   const intentResult = detectIntent(latestUserMessage, context.contact);
 
@@ -182,7 +182,7 @@ export async function buildUnserGptReply({ messages = [], context = {}, env = pr
       ...intentResult
     };
   } catch (error) {
-    console.warn('[unsergpt] OpenAI fallback:', error.message);
+    console.warn('[klipitgood] OpenAI fallback:', error.message);
     return {
       assistantMessage: buildFallbackAssistantMessage(intentResult),
       aiProvider: 'fallback',
@@ -220,7 +220,7 @@ export function buildFounderNotificationPayload(event) {
 
 function notificationText(payload) {
   return [
-    `New UNSERGPT action: ${payload.detectedIntent}`,
+    `New KlipItGood action: ${payload.detectedIntent}`,
     `Message: ${payload.userMessage || 'Not provided'}`,
     `Name: ${payload.name || 'Not provided'}`,
     `Email: ${payload.email || 'Not provided'}`,
@@ -268,9 +268,9 @@ export async function notifyFounder(event, { env = process.env, fetchImpl = fetc
         method: 'POST',
         headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          from: env.RESEND_FROM || 'UNSERGPT <onboarding@resend.dev>',
+          from: env.RESEND_FROM || 'KlipItGood <onboarding@resend.dev>',
           to: [notifyEmail],
-          subject: `New UNSERGPT lead: ${payload.detectedIntent}`,
+          subject: `New KlipItGood lead: ${payload.detectedIntent}`,
           text,
           reply_to: payload.email || undefined
         })
@@ -288,8 +288,8 @@ export async function notifyFounder(event, { env = process.env, fetchImpl = fetc
         headers: { Authorization: `Bearer ${env.SENDGRID_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           personalizations: [{ to: [{ email: notifyEmail }] }],
-          from: { email: env.SENDGRID_FROM_EMAIL || 'alerts@unser.media', name: 'UNSERGPT' },
-          subject: `New UNSERGPT lead: ${payload.detectedIntent}`,
+          from: { email: env.SENDGRID_FROM_EMAIL || 'alerts@unser.media', name: 'KlipItGood' },
+          subject: `New KlipItGood lead: ${payload.detectedIntent}`,
           content: [{ type: 'text/plain', value: text }]
         })
       });

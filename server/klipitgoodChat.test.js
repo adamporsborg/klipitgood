@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildFallbackAssistantMessage,
-  buildUnserGptReply,
+  buildKlipItGoodReply,
   detectIntent,
   extractContactInfo,
   shouldNotifyFounder
-} from './unsergpt.js';
+} from './klipitgoodChat.js';
 
 test('detectIntent classifies actionable clipping leads without forcing a form', () => {
   const result = detectIntent('I need clips from my podcast. Can you do this for me?');
@@ -39,12 +39,12 @@ test('fallback assistant stays useful when OpenAI is unavailable', () => {
     actionFlags: { showTrialPath: true }
   });
 
-  assert.match(message, /KlipItGood Starter/i);
+  assert.match(message, /\$199\/year/i);
   assert.doesNotMatch(message, /prototype|as an ai/i);
 });
 
-test('buildUnserGptReply uses fallback and reports missing OpenAI key without throwing', async () => {
-  const result = await buildUnserGptReply({
+test('buildKlipItGoodReply uses fallback and reports missing OpenAI key without throwing', async () => {
+  const result = await buildKlipItGoodReply({
     messages: [{ role: 'user', content: 'How much for clipping my podcast?' }],
     env: {}
   });
@@ -52,7 +52,7 @@ test('buildUnserGptReply uses fallback and reports missing OpenAI key without th
   assert.equal(result.detectedIntent, 'pricing_question');
   assert.equal(result.aiProvider, 'fallback');
   assert.equal(result.warning, 'OPENAI_API_KEY is not configured.');
-  assert.match(result.assistantMessage, /Starter/i);
+  assert.match(result.assistantMessage, /\$199\/year/i);
 });
 
 test('shouldNotifyFounder only notifies for actionable conversations and suppresses duplicates', () => {

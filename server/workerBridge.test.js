@@ -31,7 +31,7 @@ test('selectNextQueuedProject picks oldest queued project with footage', () => {
 test('buildWorkerProjectUpdate merges worker patch into intake_data', () => {
   const project = {
     intake_data: {
-      source: 'unsergpt',
+      source: 'klipitgood',
       worker: { started_at: 'old' }
     }
   };
@@ -41,7 +41,7 @@ test('buildWorkerProjectUpdate merges worker patch into intake_data', () => {
     {
       status: 'processing',
       intake_data: {
-        source: 'unsergpt',
+        source: 'klipitgood',
         worker: {
           started_at: 'old',
           label: 'kg_demo'

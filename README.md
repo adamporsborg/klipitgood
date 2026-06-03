@@ -2,13 +2,13 @@
 
 An AI-powered video clipping pipeline that automatically identifies, cuts, and delivers short-form clips from long-form footage — fully integrated with a conversational intake portal and serverless deployment via GitHub Actions.
 
-Built by [UNSER Media](https://unser.media) to power the KlipItGood service.
+Built by [Unser.Media](https://unser.media) to power the KlipItGood service.
 
 ---
 
 ## What it does
 
-1. **User submits footage** through the UNSERGPT chat portal (upload or URL)
+1. **User submits footage** through the KlipItGood chat portal (upload or URL)
 2. **Supabase webhook fires** when the job is queued → triggers a GitHub Actions runner
 3. **Groq Whisper API** transcribes the audio with word-level timestamps (free tier, no local model)
 4. **Claude API (Anthropic)** analyzes the transcript and identifies the highest-scoring clip moments with rationale
@@ -21,7 +21,7 @@ Built by [UNSER Media](https://unser.media) to power the KlipItGood service.
 ## Architecture
 
 ```
-unser.media/portal  ──→  Supabase Edge Functions  ──→  Supabase DB (projects table)
+KlipItGood portal  ──→  Supabase Edge Functions  ──→  Supabase DB (projects table)
                                                               │
                                               repository_dispatch webhook
                                                               │
@@ -184,7 +184,7 @@ Caption style can be specified per-job via the portal or system prompt context.
 │   └── process-clip.yml     # GitHub Actions worker trigger
 ├── server/                  # Node.js Express API
 │   ├── index.js             # API routes
-│   ├── unsergpt.js          # UNSERGPT chat AI logic
+│   ├── klipitgoodChat.js    # KlipItGood chat AI logic
 │   ├── intake.js            # Lead capture & portal submission
 │   └── payments.js          # Stripe checkout integration
 ├── worker/                  # Video processing pipeline
@@ -204,4 +204,4 @@ Caption style can be specified per-job via the portal or system prompt context.
 
 ## License
 
-MIT — built by [UNSER Media](https://unser.media)
+MIT — built by [Unser.Media](https://unser.media)

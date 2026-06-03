@@ -1,44 +1,46 @@
 export const KLIPITGOOD_PLANS = {
-  starter: {
-    id: 'starter',
-    name: 'KlipItGood Starter',
-    priceLabel: process.env.STRIPE_STARTER_PRICE_LABEL || '$49/month',
-    trialDays: 7,
+  per_clip: {
+    id: 'per_clip',
+    name: 'KlipItGood $1 Per Clip',
+    priceLabel: process.env.STRIPE_PER_CLIP_PRICE_LABEL || '$1/clip',
+    conversionRole: 'trial',
     includes: [
-      '7-day free trial',
-      'monthly clip allowance',
-      'captions',
-      'social-ready exports',
-      'portal access'
+      '$1 per delivered clip',
+      'AI clipping brief',
+      'captions and social-ready exports',
+      'upgrade anytime'
     ]
   },
-  growth: {
-    id: 'growth',
-    name: 'KlipItGood Growth',
-    priceLabel: process.env.STRIPE_GROWTH_PRICE_LABEL || 'Pricing configured in Stripe',
+  unlimited_monthly: {
+    id: 'unlimited_monthly',
+    name: 'KlipItGood Unlimited Monthly',
+    priceLabel: process.env.STRIPE_UNLIMITED_MONTHLY_PRICE_LABEL || '$29.99/month',
+    conversionRole: 'fallback',
     includes: [
-      'more clips',
-      'priority processing',
-      'graphics',
-      'enhanced support'
+      'unlimited clipping',
+      'one active upload at a time',
+      'prompt-based revisions',
+      'strategy and shoot planning',
+      'cancel anytime'
     ]
   },
-  operator: {
-    id: 'operator',
-    name: 'UNSER Operator',
-    priceLabel: process.env.STRIPE_OPERATOR_PRICE_LABEL || 'Scoped with UNSER',
+  annual_unlimited: {
+    id: 'annual_unlimited',
+    name: 'KlipItGood Founding 50 Unlimited',
+    priceLabel: process.env.STRIPE_ANNUAL_UNLIMITED_PRICE_LABEL || '$199/year for life',
+    conversionRole: 'primary',
     includes: [
-      'done-for-you workflows',
-      'content systems',
-      'strategy',
-      'operational support',
-      'advanced AI assistance'
+      'unlimited clipping projects',
+      'price locked while subscription stays active',
+      'prompt-based revisions',
+      'saved styles and project memory',
+      'only 50 founding spots'
     ]
   }
 };
 
 export function getPlan(planId) {
-  return KLIPITGOOD_PLANS[planId] || KLIPITGOOD_PLANS.starter;
+  return KLIPITGOOD_PLANS[planId] || KLIPITGOOD_PLANS.annual_unlimited;
 }
 
 export async function createCheckoutLink({ planId, lead, request }) {
@@ -50,8 +52,19 @@ export async function createCheckoutLink({ planId, lead, request }) {
     lead_name: lead?.name || '',
     service_request_id: request?.id || '',
     selected_plan: plan.id,
-    source: 'unsergpt_portal'
+    source: 'klipitgood_app'
   };
+
+  const directPaymentLink = process.env[`STRIPE_${plan.id.toUpperCase()}_PAYMENT_LINK`];
+  if (directPaymentLink) {
+    return {
+      provider: 'stripe_payment_link',
+      plan,
+      metadata,
+      url: directPaymentLink,
+      todo: null
+    };
+  }
 
   if (process.env.STRIPE_SECRET_KEY && process.env[`STRIPE_${plan.id.toUpperCase()}_PRICE_ID`]) {
     return {
@@ -63,12 +76,12 @@ export async function createCheckoutLink({ planId, lead, request }) {
     };
   }
 
-  const subject = encodeURIComponent(`${plan.name} for ${lead?.name || lead?.email || 'new UNSERGPT lead'}`);
+  const subject = encodeURIComponent(`${plan.name} for ${lead?.name || lead?.email || 'new KlipItGood lead'}`);
   const body = encodeURIComponent([
     `Plan interest: ${plan.name}`,
     `Lead: ${lead?.name || 'Not provided'} <${lead?.email || 'not provided'}>`,
     `Request: ${request?.id || 'not saved'}`,
-    'Source: UNSERGPT portal'
+    'Source: KlipItGood app'
   ].join('\n'));
 
   return {

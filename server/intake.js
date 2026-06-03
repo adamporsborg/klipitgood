@@ -67,7 +67,7 @@ export function buildPortalSubmission(body = {}, userAgent = null) {
     metadata: {
       free_clips_offered: requestType === 'video_clipping',
       ongoing_need: cleanString(answers.ongoingNeed, 1000) || null,
-      source: 'unsergpt'
+      source: 'klipitgood'
     }
   };
 
@@ -95,7 +95,7 @@ export function portalSubmissionEmailHtml({ lead, request, answers }) {
 
   return `
     <div style="font-family: Inter, Arial, sans-serif; color: #111827; line-height: 1.5;">
-      <h1 style="margin: 0 0 16px;">New UNSER portal request</h1>
+      <h1 style="margin: 0 0 16px;">New KlipItGood request</h1>
       <p><strong>Request type:</strong> ${escapeHtml(request.request_type)}</p>
       <p><strong>Name:</strong> ${escapeHtml(lead.name || 'Not provided')}</p>
       <p><strong>Email:</strong> ${escapeHtml(lead.email)}</p>
