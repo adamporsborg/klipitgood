@@ -1021,7 +1021,6 @@ app.post('/api/public/brief', async (req, res) => {
       footage_url: footageUrl || null,
       prompt: brief,
       intake_data: { source: 'public_brief', clip_goal: brief },
-      brand_assets: req.body?.brand_assets || {},
     })
     .select('id, title, status, footage_url, prompt, created_at')
     .single();
@@ -1059,7 +1058,6 @@ app.post('/api/public/create-project', async (req, res) => {
         clip_goal: brief,
         source: 'public_api',
       },
-      brand_assets: req.body?.brand_assets || {},
     })
     .select('id, title, status, footage_url, prompt, created_at')
     .single();
