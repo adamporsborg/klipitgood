@@ -26,6 +26,7 @@
  *   --redetect           Re-run face detection even if cached
  */
 
+import "dotenv/config";
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
@@ -168,50 +169,178 @@ const probeResult = execSync(
 const probe = JSON.parse(probeResult);
 const duration = parseFloat(probe.format.duration);
 
-// Use Groq Whisper API (free tier) instead of local faster-whisper.
-// Falls back to local transcribe.py if GROQ_API_KEY is not set.
-let transcript;
-if (process.env.GROQ_API_KEY) {
-  const { createReadStream } = await import("fs");
-  const { default: Groq } = await import("groq-sdk");
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// ── Helpers for chunked transcription ────────────────────────────────────────
 
-  console.log("  Using Groq Whisper API...");
-  const response = await groq.audio.transcriptions.create({
-    file: createReadStream(footagePath),
+const GROQ_LIMIT_BYTES = 24 * 1024 * 1024; // 24 MB (Groq hard cap is 25 MB)
+const CHUNK_SECONDS    = 20 * 60;           // 20-minute chunks with overlap
+const CHUNK_OVERLAP    = 3;                 // seconds of overlap between chunks
+
+/**
+ * Extract compressed mono audio from any video/audio file.
+ * Output is a small .mp3 — typically 1–2 MB per minute of speech.
+ */
+function extractAudio(inputPath, outputPath) {
+  execSync(
+    `ffmpeg -y -i "${inputPath}" -vn -ac 1 -ar 16000 -ab 32k -f mp3 "${outputPath}"`,
+    { stdio: "pipe", timeout: 300000 }
+  );
+}
+
+
+/**
+ * Transcribe one audio file via Groq Whisper. Returns raw API response.
+ */
+async function transcribeChunk(groq, audioPath) {
+  const { createReadStream } = await import("fs");
+  return groq.audio.transcriptions.create({
+    file: createReadStream(audioPath),
     model: "whisper-large-v3",
     response_format: "verbose_json",
     timestamp_granularities: ["word", "segment"],
   });
+}
 
-  // Normalise to the same shape as transcribe.py output
-  transcript = {
-    text: response.text,
-    words: (response.words || []).map((w) => ({
-      word: w.word,
-      start: w.start,
-      end: w.end,
-    })),
-    segments: (response.segments || []).map((s) => ({
-      text: s.text.trim(),
-      start: s.start,
-      end: s.end,
-    })),
+/**
+ * Merge chunk transcripts into one, applying time offsets and deduping
+ * overlapping words at chunk boundaries.
+ */
+function mergeTranscripts(chunks) {
+  const allWords = [];
+  const allSegments = [];
+
+  for (const { response, startOffset, endOffset } of chunks) {
+    const words = (response.words || [])
+      .map((w) => ({ word: w.word, start: w.start + startOffset, end: w.end + startOffset }))
+      // Drop words that fall in the overlap zone of the previous chunk
+      .filter((w) => w.start >= (startOffset === 0 ? 0 : startOffset + CHUNK_OVERLAP / 2));
+
+    const segs = (response.segments || [])
+      .map((s) => ({ text: s.text.trim(), start: s.start + startOffset, end: s.end + startOffset }))
+      .filter((s) => s.start >= (startOffset === 0 ? 0 : startOffset + CHUNK_OVERLAP / 2));
+
+    allWords.push(...words);
+    allSegments.push(...segs);
+  }
+
+  return {
+    text: allSegments.map((s) => s.text).join(" "),
+    words: allWords,
+    segments: allSegments,
   };
-} else {
-  // Local fallback — requires Python + faster-whisper installed
-  console.log("  GROQ_API_KEY not set — falling back to local transcribe.py...");
-  const pythonBin = process.env.PYTHON_BIN || "python3";
-  const transcribeResult = spawnSync(
-    pythonBin,
-    [join(__dirname, "transcribe.py"), footagePath],
-    { maxBuffer: 100 * 1024 * 1024, timeout: 600000 }
+}
+
+// ── Run transcription ─────────────────────────────────────────────────────────
+
+// Use Groq Whisper API (free tier) instead of local faster-whisper.
+// Falls back to local transcribe.py if GROQ_API_KEY is not set.
+let transcript;
+if (process.env.GROQ_API_KEY) {
+  const { default: Groq } = await import("groq-sdk");
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+  // 1. Extract compressed mono audio — shrinks a 2GB video to ~60–120 MB
+  const tmpDir = join(PROJECT_ROOT, "tmp", "audio");
+  mkdirSync(tmpDir, { recursive: true });
+  const audioPath = join(tmpDir, `_audio_${label}.mp3`);
+
+  console.log("  Extracting audio (mono 32kbps)...");
+  extractAudio(footagePath, audioPath);
+
+  const audioSizeBytes = parseInt(execSync(`wc -c < "${audioPath}"`).toString().trim());
+  console.log(`  Audio extracted: ${(audioSizeBytes / 1024 / 1024).toFixed(1)} MB`);
+
+  // 2. Split into chunks if still over Groq's 25MB limit
+  const chunks = [];
+  if (audioSizeBytes <= GROQ_LIMIT_BYTES) {
+    chunks.push({ path: audioPath, startOffset: 0 });
+  } else {
+    let chunkStart = 0;
+    let chunkIndex = 0;
+    while (chunkStart < duration) {
+      const chunkEnd = Math.min(chunkStart + CHUNK_SECONDS, duration);
+      const chunkPath = join(tmpDir, `_audio_${label}_${chunkIndex}.mp3`);
+      execSync(
+        `ffmpeg -y -i "${audioPath}" -ss ${chunkStart} -to ${chunkEnd} -c copy "${chunkPath}"`,
+        { stdio: "pipe", timeout: 120000 }
+      );
+      chunks.push({ path: chunkPath, startOffset: chunkStart });
+      chunkStart = chunkEnd - CHUNK_OVERLAP;
+      chunkIndex++;
+      if (chunkEnd >= duration) break;
+    }
+    console.log(`  Split into ${chunks.length} chunks`);
+  }
+
+  // 3. Transcribe each chunk
+  let groqFailed = false;
+  const chunkResults = [];
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const { path: chunkPath, startOffset } = chunks[i];
+      if (chunks.length > 1) console.log(`  Transcribing chunk ${i + 1}/${chunks.length}...`);
+      const response = await transcribeChunk(groq, chunkPath);
+      chunkResults.push({ response, startOffset });
+    }
+  } catch (groqErr) {
+    if (groqErr.status === 401 || groqErr.status === 403) {
+      console.warn(`  ⚠  Groq key invalid (${groqErr.status}) — falling back to local Whisper`);
+      groqFailed = true;
+    } else {
+      throw groqErr;
+    }
+  }
+
+  if (!groqFailed) {
+    // 4. Merge and normalise
+    transcript = mergeTranscripts(chunkResults);
+    console.log(`  ✓ Groq transcription complete`);
+  }
+}
+
+if (!transcript) {
+  // Local fallback — use the `whisper` CLI (installed via pip install openai-whisper)
+  console.log("  Falling back to local Whisper CLI...");
+
+  const localTmpDir = join(PROJECT_ROOT, "tmp", "audio");
+  mkdirSync(localTmpDir, { recursive: true });
+  const localAudioPath = join(localTmpDir, `_audio_${label}_local.mp3`);
+
+  if (!existsSync(localAudioPath)) {
+    console.log("  Extracting audio...");
+    extractAudio(footagePath, localAudioPath);
+  }
+
+  const whisperOut = join(localTmpDir, `_whisper_${label}`);
+  mkdirSync(whisperOut, { recursive: true });
+
+  console.log("  Running whisper (base model, may take a few minutes)...");
+  const whisperResult = spawnSync(
+    "whisper",
+    [localAudioPath, "--model", "base", "--output_format", "json",
+     "--output_dir", whisperOut, "--word_timestamps", "True"],
+    { maxBuffer: 100 * 1024 * 1024, timeout: 900000, encoding: "utf8" }
   );
-  if (transcribeResult.status !== 0) {
-    console.error("✗ Transcription failed:", transcribeResult.stderr.toString().slice(0, 300));
+
+  if (whisperResult.status !== 0) {
+    console.error("✗ Local Whisper transcription failed:");
+    console.error(whisperResult.stderr?.slice(0, 500) || "(no stderr)");
     process.exit(1);
   }
-  transcript = JSON.parse(transcribeResult.stdout.toString());
+
+  const { readdirSync } = await import("fs");
+  const jsonFile = readdirSync(whisperOut).find(f => f.endsWith(".json"));
+  if (!jsonFile) { console.error("✗ Whisper produced no JSON output"); process.exit(1); }
+
+  const whisperData = JSON.parse(readFileSync(join(whisperOut, jsonFile), "utf8"));
+  const segs = whisperData.segments || [];
+  const words = segs.flatMap(s => (s.words || []).map(w => ({ word: w.word, start: w.start, end: w.end })));
+
+  transcript = {
+    text: whisperData.text || segs.map(s => s.text).join(" "),
+    words,
+    segments: segs.map(s => ({ text: s.text.trim(), start: s.start, end: s.end })),
+  };
+  console.log("  ✓ Local Whisper transcription complete");
 }
 
 console.log(`  ✓ ${transcript.words.length} words transcribed`);
@@ -458,7 +587,7 @@ async function generateClipJson(systemPrompt, userMessage) {
       .replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
   }
 
-  const client = new Anthropic();
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const message = await client.messages.create({
     model: claudeModel,
     max_tokens: 16000,
@@ -541,7 +670,7 @@ function buildSubClips(segments, zoomKeyframes) {
     for (const seg of timeline) {
       const s = Math.max(zone.clipStart, seg.clipStart);
       const e = Math.min(zone.clipEnd, seg.clipEnd);
-      if (e <= s + 0.01) continue;
+      if (e <= s + 0.1) continue; // skip slivers under 100ms — AAC needs at least ~23ms per frame
       subClips.push({
         sourceStart: seg.sourceStart + (s - seg.clipStart),
         duration: e - s,
@@ -566,17 +695,44 @@ function buildSubClips(segments, zoomKeyframes) {
 
 function renderClip(clip, outFile) {
   const subClips = buildSubClips(clip.segments, clip.zoomKeyframes);
-  const inputs = subClips.map(sc =>
-    `-ss ${sc.sourceStart.toFixed(3)} -t ${sc.duration.toFixed(3)} -i "${proxyPath}"`
-  ).join(" ");
-  const filterParts = subClips.map((sc, i) => {
+  const tmpDir = join(PROJECT_ROOT, "tmp", "segments");
+  mkdirSync(tmpDir, { recursive: true });
+
+  // Step 1: Render each subclip to a temp file (one -ss/-t seek per clip)
+  const segFiles = subClips.map((sc, i) => {
     const { cw, ch, cx, cy } = cropForScale(sc.scale);
-    return `[${i}:v]crop=${cw}:${ch}:${cx}:${cy},scale=${OUT_W}:${OUT_H}:flags=lanczos[v${i}]`;
+    const segFile = join(tmpDir, `_seg_${label}_${i}.mp4`);
+    const cmd = [
+      `ffmpeg -y`,
+      `-ss ${sc.sourceStart.toFixed(3)} -t ${sc.duration.toFixed(3)}`,
+      `-i "${proxyPath}"`,
+      `-vf "crop=${cw}:${ch}:${cx}:${cy},scale=${OUT_W}:${OUT_H}:flags=lanczos"`,
+      `-c:v libx264 -crf 20 -preset fast`,
+      `-c:a aac -b:a 128k -ar 48000 -ac 2`,
+      `-movflags +faststart`,
+      `"${segFile}"`,
+    ].join(" ");
+    try {
+      execSync(cmd, { stdio: "pipe", timeout: 120000 });
+    } catch (e) {
+      throw new Error(`Segment ${i} render failed: ${e.stderr?.toString().slice(-300) || e.message}`);
+    }
+    return segFile;
   });
-  const concatInputs = subClips.map((_, i) => `[v${i}][${i}:a]`).join("");
-  const fc = [...filterParts, `${concatInputs}concat=n=${subClips.length}:v=1:a=1[vout][aout]`].join(";");
-  const cmd = `ffmpeg -y ${inputs} -filter_complex "${fc}" -map "[vout]" -map "[aout]" -c:v libx264 -crf 20 -preset fast -c:a aac -b:a 128k -movflags +faststart "${outFile}"`;
-  execSync(cmd, { stdio: "pipe" });
+
+  // Step 2: Join with the concat demuxer (stream copy — no re-encode, perfectly reliable)
+  const listPath = join(tmpDir, `_concat_${label}.txt`);
+  writeFileSync(listPath, segFiles.map(f => `file '${f}'`).join("\n"));
+
+  const joinCmd = `ffmpeg -y -f concat -safe 0 -i "${listPath}" -c copy -movflags +faststart "${outFile}"`;
+  try {
+    execSync(joinCmd, { stdio: "pipe", timeout: 120000 });
+  } catch (e) {
+    throw new Error(`Concat failed: ${e.stderr?.toString().slice(-300) || e.message}`);
+  }
+
+  // Cleanup temp segment files
+  for (const f of segFiles) { try { require ? null : null; execSync(`rm -f "${f}"`, { stdio: "pipe" }); } catch {} }
 }
 
 const versions = loadVersions();
