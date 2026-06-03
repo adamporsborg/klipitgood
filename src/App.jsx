@@ -333,7 +333,7 @@ function hasOngoingNeed(text) {
 const initialMessages = [
   {
     role: 'assistant',
-    content: "Drop a YouTube link or upload a video file. Add any direction you want — or just send the link and I'll pick the best clips.",
+    content: "What are we klipping today?",
     showUpload: true
   }
 ];
@@ -359,6 +359,10 @@ function emptyContact() {
   return { name: '', email: '', phone: '', businessName: '', website: '' };
 }
 
+function emptyBrandKit() {
+  return { logoUrl: '', primaryColor: '', secondaryColor: '', captionStyle: 'bold-pop', referenceClipUrl: '', notes: '' };
+}
+
 function normalizeMessage(role, content, extra = {}) {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -377,6 +381,139 @@ function newChatRecord(title = 'New chat') {
     archived: false,
     createdAt: new Date().toISOString()
   };
+}
+
+// ─── Brand Kit Panel ─────────────────────────────────────────────────────────
+function BrandKitPanel({ brandKit, onChange, onClose }) {
+  const [logoUploading, setLogoUploading] = useState(false);
+  const set = (key, val) => onChange({ ...brandKit, [key]: val });
+
+  async function handleLogoUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoUploading(true);
+    try {
+      const response = await fetch('/api/uploads/footage', {
+        method: 'POST',
+        headers: {
+          'Content-Type': file.type || 'image/png',
+          'X-File-Name': file.name,
+        },
+        body: file,
+      });
+      const result = await response.json();
+      if (response.ok) set('logoUrl', result.footageUrl || result.url);
+    } catch {
+      // silently fail — logo is optional
+    } finally {
+      setLogoUploading(false);
+      e.target.value = '';
+    }
+  }
+
+  return (
+    <div className="brand-kit-panel">
+      <div className="brand-kit-head">
+        <strong>Brand kit</strong>
+        <span>Saved to your browser. Applied to every project.</span>
+        <button type="button" onClick={onClose}>✕</button>
+      </div>
+
+      <div className="brand-kit-grid">
+        <div className="brand-kit-field">
+          <label>Logo</label>
+          {brandKit.logoUrl ? (
+            <div className="brand-logo-preview">
+              <img src={brandKit.logoUrl} alt="Logo" />
+              <button type="button" onClick={() => set('logoUrl', '')}>Remove</button>
+            </div>
+          ) : (
+            <label className={`brand-upload-btn${logoUploading ? ' loading' : ''}`}>
+              {logoUploading ? 'Uploading…' : '+ Upload logo'}
+              <input type="file" accept="image/*" onChange={handleLogoUpload} disabled={logoUploading} />
+            </label>
+          )}
+        </div>
+
+        <div className="brand-kit-field">
+          <label>Brand colors</label>
+          <div className="brand-colors">
+            <label>
+              <span>Primary</span>
+              <input
+                type="color"
+                value={brandKit.primaryColor || '#6366f1'}
+                onChange={e => set('primaryColor', e.target.value)}
+              />
+              <input
+                type="text"
+                value={brandKit.primaryColor}
+                onChange={e => set('primaryColor', e.target.value)}
+                placeholder="#6366f1"
+                maxLength={7}
+              />
+            </label>
+            <label>
+              <span>Secondary</span>
+              <input
+                type="color"
+                value={brandKit.secondaryColor || '#a78bfa'}
+                onChange={e => set('secondaryColor', e.target.value)}
+              />
+              <input
+                type="text"
+                value={brandKit.secondaryColor}
+                onChange={e => set('secondaryColor', e.target.value)}
+                placeholder="#a78bfa"
+                maxLength={7}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="brand-kit-field">
+          <label>Caption style</label>
+          <div className="brand-caption-chips">
+            {[
+              { id: 'bold-pop', label: '🔥 Bold Pop' },
+              { id: 'word-pop', label: '💥 Word Pop' },
+              { id: 'minimal', label: '✨ Minimal' },
+              { id: 'none', label: '🚫 No captions' },
+            ].map(s => (
+              <button
+                key={s.id}
+                type="button"
+                className={brandKit.captionStyle === s.id ? 'active' : ''}
+                onClick={() => set('captionStyle', s.id)}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="brand-kit-field">
+          <label>Style reference <span>YouTube clip you want to match</span></label>
+          <input
+            type="url"
+            value={brandKit.referenceClipUrl}
+            onChange={e => set('referenceClipUrl', e.target.value)}
+            placeholder="https://youtube.com/watch?v=…"
+          />
+        </div>
+
+        <div className="brand-kit-field full-width">
+          <label>Notes <span>anything the AI should always know about your brand</span></label>
+          <textarea
+            value={brandKit.notes}
+            onChange={e => set('notes', e.target.value)}
+            placeholder="e.g. masculine tone, no profanity, always make the subject look strong, faith-based content…"
+            rows={2}
+          />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function getAnonymousSessionId() {
@@ -454,6 +591,18 @@ function PortalPage({ user, onSignOut }) {
   function selectProject(projectId) {
     setSelectedProjectId(projectId);
     loadSelectedProject(projectId);
+  }
+
+  // ── Brand kit (persisted in localStorage) ────────────────────────────────
+  const [brandKit, setBrandKit] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('klipitgood_brand_kit') || 'null') || emptyBrandKit(); }
+    catch { return emptyBrandKit(); }
+  });
+  const [brandKitOpen, setBrandKitOpen] = useState(false);
+
+  function saveBrandKit(next) {
+    setBrandKit(next);
+    localStorage.setItem('klipitgood_brand_kit', JSON.stringify(next));
   }
 
   const scroller = useRef(null);
@@ -681,10 +830,16 @@ function PortalPage({ user, onSignOut }) {
       ? (await supabase.auth.getSession()).data.session?.access_token
       : null;
 
-    // Build a brief string if the user gave direction
-    const clipGoal = directive
-      ? `DIRECTIVE: ${directive}`
-      : 'Best clips, default settings.';
+    // Build brief — directive + any brand kit context
+    const brandLines = [];
+    if (brandKit.referenceClipUrl) brandLines.push(`REFERENCE_CLIP: ${brandKit.referenceClipUrl}`);
+    if (brandKit.captionStyle) brandLines.push(`CAPTION_STYLE: ${brandKit.captionStyle}`);
+    if (brandKit.notes) brandLines.push(`BRAND_NOTES: ${brandKit.notes}`);
+
+    const clipGoal = [
+      directive ? `DIRECTIVE: ${directive}` : null,
+      ...brandLines,
+    ].filter(Boolean).join('\n') || 'Best clips, default settings.';
 
     const response = await fetch('/api/portal/submit', {
       method: 'POST',
@@ -699,6 +854,11 @@ function PortalPage({ user, onSignOut }) {
           clipGoal,
         },
         contact: { email: contact.email || user?.email || '' },
+        brandAssets: {
+          logoUrl: brandKit.logoUrl || null,
+          primaryColor: brandKit.primaryColor || null,
+          secondaryColor: brandKit.secondaryColor || null,
+        },
         directSubmit: true,
       })
     });
@@ -940,15 +1100,7 @@ function PortalPage({ user, onSignOut }) {
                   <p>{message.content}</p>
                   {message.showUpload && (
                     <div className="quick-starts">
-                      <label className="upload-chip-large">
-                        📎 Upload a video file
-                        <input
-                          type="file"
-                          accept="video/*"
-                          onChange={handleFileInput}
-                          disabled={status.type === 'submitting'}
-                        />
-                      </label>
+                      <button type="button" onClick={() => startFlow('video_clipping')}>🎬 Start clipping</button>
                       <button type="button" onClick={showPricing}>See pricing</button>
                     </div>
                   )}
@@ -1000,6 +1152,14 @@ function PortalPage({ user, onSignOut }) {
           </div>
         </section>
 
+        {brandKitOpen && (
+          <BrandKitPanel
+            brandKit={brandKit}
+            onChange={saveBrandKit}
+            onClose={() => setBrandKitOpen(false)}
+          />
+        )}
+
         <form
           className="composer"
           onSubmit={sendMessage}
@@ -1019,10 +1179,18 @@ function PortalPage({ user, onSignOut }) {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (canSend) sendMessage(e); } }}
-            placeholder="Paste a YouTube link or describe what to clip… (or drop a video file)"
+            placeholder="Tell me what to clip, or just drop a video file…"
             rows="1"
             disabled={status.type === 'submitting'}
           />
+          <button
+            type="button"
+            className={`brand-kit-btn${brandKit.logoUrl || brandKit.primaryColor ? ' has-brand' : ''}`}
+            title="Brand kit — logo, colors, style"
+            onClick={() => setBrandKitOpen(o => !o)}
+          >
+            🎨
+          </button>
           <button type="submit" disabled={!canSend}>
             {status.type === 'submitting' ? '…' : '↑'}
           </button>
