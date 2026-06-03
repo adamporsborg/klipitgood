@@ -19,10 +19,10 @@ import {
 } from './intake.js';
 import { createCheckoutLink, getPlan } from './payments.js';
 import {
-  buildUnserGptReply,
+  buildKlipItGoodReply,
   notifyFounder,
   shouldNotifyFounder
-} from './unsergpt.js';
+} from './klipitgoodChat.js';
 import {
   buildWorkerProjectUpdate,
   engineReady,
@@ -57,7 +57,7 @@ const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
 const supabaseServerKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey;
 const adminPassword = process.env.ADMIN_PASSWORD;
 const adminEmail = process.env.ADMIN_EMAIL || 'adamporsborg@gmail.com';
-const resendFrom = process.env.RESEND_FROM || 'UNSERGPT <onboarding@resend.dev>';
+const resendFrom = process.env.RESEND_FROM || 'KlipItGood <onboarding@resend.dev>';
 const workerToken = process.env.KLIPITGOOD_WORKER_TOKEN || adminPassword;
 const workerAutoRun = process.env.KLIPITGOOD_AUTO_RUN !== 'false';
 const runningWorkers = new Map();
@@ -107,6 +107,23 @@ function requireWorker(req, res, next) {
   }
 
   next();
+}
+
+/**
+ * Reads the Supabase JWT from the Authorization header and returns the user object,
+ * or null if not present / invalid. Non-blocking — never rejects the request.
+ */
+async function getUserFromRequest(req) {
+  if (!supabase) return null;
+  const auth = req.header('authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token || token === workerToken) return null; // skip worker tokens
+  try {
+    const { data, error } = await supabase.auth.getUser(token);
+    return error ? null : (data.user || null);
+  } catch {
+    return null;
+  }
 }
 
 function workerBaseUrl() {
@@ -215,7 +232,7 @@ async function findOrCreateChatConversation({ anonymousSessionId, conversationId
       .single();
     if (!error) session = data;
   } catch (error) {
-    console.warn('[unsergpt] anonymous session save failed:', error.message);
+    console.warn('[klipitgood] anonymous session save failed:', error.message);
   }
 
   if (conversationId) {
@@ -230,7 +247,7 @@ async function findOrCreateChatConversation({ anonymousSessionId, conversationId
   const payload = {
     request_type: detectedIntent,
     status: 'active',
-    title: cleanString(title, 120) || 'UNSERGPT chat'
+    title: cleanString(title, 120) || 'KlipItGood chat'
   };
 
   if (session?.id) payload.anonymous_session_id = session.id;
@@ -242,7 +259,7 @@ async function findOrCreateChatConversation({ anonymousSessionId, conversationId
     .single();
 
   if (error) {
-    console.warn('[unsergpt] conversation save failed:', error.message);
+    console.warn('[klipitgood] conversation save failed:', error.message);
     return null;
   }
 
@@ -258,14 +275,14 @@ async function saveChatMessages({ conversationId, userMessage, assistantMessage,
   ];
 
   const { error } = await supabase.from('messages').insert(rows);
-  if (error) console.warn('[unsergpt] message save failed:', error.message);
+  if (error) console.warn('[klipitgood] message save failed:', error.message);
 }
 
 async function upsertLeadFromContact(contact = {}) {
   if (!supabase || !contact.email) return null;
 
   const payload = {
-    name: cleanString(contact.name, 120) || 'UNSERGPT lead',
+    name: cleanString(contact.name, 120) || 'KlipItGood lead',
     email: cleanString(contact.email, 254).toLowerCase(),
     phone: cleanString(contact.phone, 40) || null
   };
@@ -277,7 +294,7 @@ async function upsertLeadFromContact(contact = {}) {
     .single();
 
   if (error) {
-    console.warn('[unsergpt] lead save failed:', error.message);
+    console.warn('[klipitgood] lead save failed:', error.message);
     return null;
   }
 
@@ -294,9 +311,9 @@ async function createChatServiceRequest({ leadId, conversationId, detectedIntent
     summary: summarizeTranscript(messages, 1800),
     source_url: null,
     subscription_intent: Boolean(actionFlags.showTrialPath),
-    selected_plan: actionFlags.showTrialPath ? 'starter' : null,
+    selected_plan: actionFlags.showTrialPath ? 'annual_unlimited' : null,
     metadata: {
-      source: 'unsergpt_portal',
+      source: 'klipitgood_app',
       conversation_id: conversationId,
       latest_user_message: cleanString(userMessage, 1000),
       contact
@@ -310,21 +327,21 @@ async function createChatServiceRequest({ leadId, conversationId, detectedIntent
     .single();
 
   if (error) {
-    console.warn('[unsergpt] service request save failed:', error.message);
+    console.warn('[klipitgood] service request save failed:', error.message);
     return null;
   }
 
   return data;
 }
 
-app.post('/api/unsergpt/chat', async (req, res) => {
+app.post('/api/klipitgood/chat', async (req, res) => {
   const messages = Array.isArray(req.body.messages) ? req.body.messages : [];
   const userMessage = [...messages].reverse().find((message) => message?.role === 'user')?.content || '';
   const anonymousSessionId = cleanString(req.body.anonymousSessionId || req.body.sessionId, 120);
   const conversationId = cleanString(req.body.conversationId, 80);
 
   try {
-    const reply = await buildUnserGptReply({
+    const reply = await buildKlipItGoodReply({
       messages,
       context: {
         currentTool: req.body.currentTool,
@@ -334,7 +351,7 @@ app.post('/api/unsergpt/chat', async (req, res) => {
     });
 
     if (reply.warning === 'OPENAI_API_KEY is not configured.') {
-      console.warn('[unsergpt] OPENAI_API_KEY is not configured; using static fallback response.');
+      console.warn('[klipitgood] OPENAI_API_KEY is not configured; using static fallback response.');
     }
 
     const conversation = await findOrCreateChatConversation({
@@ -405,8 +422,8 @@ app.post('/api/unsergpt/chat', async (req, res) => {
       warning: reply.warning || null
     });
   } catch (error) {
-    console.error('[unsergpt] chat error:', error);
-    res.status(500).json({ error: 'UNSERGPT could not respond right now.' });
+    console.error('[klipitgood] chat error:', error);
+    res.status(500).json({ error: 'KlipItGood could not respond right now.' });
   }
 });
 
@@ -522,8 +539,12 @@ app.post('/api/portal/submit', async (req, res) => {
 
   let queuedProject = null;
   if (serviceRequest.request_type === 'video_clipping') {
+    // Attach user_id if the request came from a logged-in user
+    const submittingUser = await getUserFromRequest(req);
+
     const projectPayload = {
       user_email: lead.email,
+      user_id: submittingUser?.id || null,
       title: cleanString(submission.answers.clipGoal, 120) || 'KlipItGood free clips request',
       status: 'queued',
       footage_url: cleanString(submission.answers.footageAccess, 1000) || null,
@@ -531,7 +552,7 @@ app.post('/api/portal/submit', async (req, res) => {
         cleanString(submission.answers.footageType, 1000),
         cleanString(submission.answers.clipGoal, 1000),
         cleanString(submission.answers.ongoingNeed, 1000)
-      ].filter(Boolean).join('\n\n') || 'UNSERGPT KlipItGood clipping request',
+      ].filter(Boolean).join('\n\n') || 'KlipItGood clipping request',
       phone: lead.phone,
       intake_data: {
         name: lead.name,
@@ -542,7 +563,7 @@ app.post('/api/portal/submit', async (req, res) => {
         clip_goal: submission.answers.clipGoal || null,
         ongoing_need: submission.answers.ongoingNeed || null,
         free_clips_offered: true,
-        source: 'unsergpt'
+        source: 'klipitgood'
       },
       brand_assets: {}
     };
@@ -569,7 +590,7 @@ app.post('/api/portal/submit', async (req, res) => {
       const email = await resend.emails.send({
         from: resendFrom,
         to: [adminEmail],
-        subject: `New UNSER portal request: ${serviceRequest.request_type}`,
+        subject: `New KlipItGood request: ${serviceRequest.request_type}`,
         html: portalSubmissionEmailHtml({
           lead,
           request: serviceRequest,
@@ -613,7 +634,7 @@ app.post('/api/portal/checkout', async (req, res) => {
           checkout_provider: checkout.provider,
           checkout_url: checkout.url,
           checkout_todo: checkout.todo,
-          source: 'unsergpt'
+          source: 'klipitgood'
         }
       })
       .eq('id', request.id);
@@ -644,7 +665,7 @@ app.get('/api/operator/overview', requireAdmin, async (_req, res) => {
     serviceRequests: requestsResult.data,
     conversations: conversationsResult.data,
     queuedProjects: projectsResult.data,
-    plans: ['starter', 'growth', 'operator'].map((id) => getPlan(id))
+    plans: ['annual_unlimited', 'unlimited_monthly', 'per_clip'].map((id) => getPlan(id))
   });
 });
 

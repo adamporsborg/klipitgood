@@ -691,26 +691,54 @@ a {
   padding: 14px clamp(12px, 3vw, 24px) 18px;
 }
 
-.composer:has(.upload-chip) {
+.composer {
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
+/* icon-only clip button in the composer */
 .upload-chip {
   min-height: 50px;
-  border: 1px dashed rgba(167, 139, 250, 0.36);
+  width: 46px;
+  border: 1px solid rgba(167, 139, 250, 0.22);
   border-radius: 8px;
   color: #a78bfa;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 12px;
-  font-size: 0.86rem;
-  font-weight: 900;
+  font-size: 1.2rem;
   cursor: pointer;
-  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.upload-chip:hover {
+  border-color: rgba(167, 139, 250, 0.5);
+  background: rgba(167, 139, 250, 0.06);
 }
 
 .upload-chip input {
+  display: none;
+}
+
+/* large upload button inside the welcome message bubble */
+.upload-chip-large {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1px dashed rgba(167, 139, 250, 0.4);
+  border-radius: 10px;
+  color: #a78bfa;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.upload-chip-large:hover {
+  background: rgba(167, 139, 250, 0.08);
+}
+
+.upload-chip-large input {
   display: none;
 }
 

@@ -333,10 +333,27 @@ function hasOngoingNeed(text) {
 const initialMessages = [
   {
     role: 'assistant',
-    content: "What are we klipping today? Upload a long video or tell me what kind of clips you need. I can turn one recording into hooks, captions, clip ideas, and a posting plan.",
-    quickStarts: true
+    content: "Drop a YouTube link or upload a video file. Add any direction you want — or just send the link and I'll pick the best clips.",
+    showUpload: true
   }
 ];
+
+// Detect YouTube or direct video URL anywhere in a string
+const YT_PATTERN = /https?:\/\/(www\.)?(youtube\.com\/watch\?[^\s]*v=|youtu\.be\/)[^\s]+/i;
+const VIDEO_URL_PATTERN = /https?:\/\/[^\s]+\.(mp4|mov|mkv|webm|avi|m4v)[^\s]*/i;
+const ANY_URL_PATTERN = /https?:\/\/[^\s]+/i;
+
+function extractFootageUrl(text) {
+  return (
+    text.match(YT_PATTERN)?.[0] ||
+    text.match(VIDEO_URL_PATTERN)?.[0] ||
+    null
+  );
+}
+
+function stripUrl(text, url) {
+  return url ? text.replace(url, '').trim() : text;
+}
 
 function emptyContact() {
   return { name: '', email: '', phone: '', businessName: '', website: '' };
@@ -658,13 +675,57 @@ function PortalPage({ user, onSignOut }) {
     }
   }
 
-  async function uploadFootage(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  // ── Core: submit a clip job directly, no wizard ───────────────────────────
+  async function submitClipDirect(footageUrl, directive) {
+    const authToken = supabase
+      ? (await supabase.auth.getSession()).data.session?.access_token
+      : null;
 
-    setUploadStatus({ type: 'submitting', message: 'Uploading footage...' });
+    // Build a brief string if the user gave direction
+    const clipGoal = directive
+      ? `DIRECTIVE: ${directive}`
+      : 'Best clips, default settings.';
+
+    const response = await fetch('/api/portal/submit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
+      body: JSON.stringify({
+        requestType: 'video_clipping',
+        answers: {
+          footageAccess: footageUrl,
+          clipGoal,
+        },
+        contact: { email: contact.email || user?.email || '' },
+        directSubmit: true,
+      })
+    });
+
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not queue the project.');
+
+    if (result.queuedProject) {
+      setProjectResult({ project: result.queuedProject, clips: [] });
+      setSelectedProjectId(result.queuedProject.id);
+      setSavedSubmission(result);
+      loadSupabaseProjects();
+    }
+
+    return result;
+  }
+
+  // ── Upload a file, then auto-submit ───────────────────────────────────────
+  async function uploadFootage(file, directive = '') {
+    if (!file) return;
+    setUploadStatus({ type: 'submitting', message: `Uploading ${file.name}…` });
+    setMessages(current => [...current,
+      normalizeMessage('user', `📎 ${file.name}${directive ? `\n${directive}` : ''}`),
+      normalizeMessage('assistant', `Got it — uploading and queueing your clips now. This usually takes 3–8 minutes. I'll show previews on the right as they finish.`)
+    ]);
     try {
-      const response = await fetch('/api/uploads/footage', {
+      const uploadResponse = await fetch('/api/uploads/footage', {
         method: 'POST',
         headers: {
           'Content-Type': file.type || 'application/octet-stream',
@@ -672,17 +733,35 @@ function PortalPage({ user, onSignOut }) {
         },
         body: file
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Could not upload footage.');
-      setInput(result.footageUrl);
-      setUploadStatus({ type: 'success', message: 'Upload ready. Send this footage path to queue the project.' });
+      const uploadResult = await uploadResponse.json();
+      if (!uploadResponse.ok) throw new Error(uploadResult.error || 'Upload failed.');
+      setUploadStatus({ type: 'idle', message: '' });
+      await submitClipDirect(uploadResult.footageUrl, directive);
     } catch (error) {
       setUploadStatus({ type: 'error', message: error.message });
-    } finally {
-      event.target.value = '';
     }
   }
 
+  // ── Handle file input change ───────────────────────────────────────────────
+  function handleFileInput(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = '';
+    uploadFootage(file, input.trim());
+    setInput('');
+  }
+
+  // ── Handle drag & drop onto the composer ──────────────────────────────────
+  function handleDrop(event) {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('video/')) {
+      uploadFootage(file, input.trim());
+      setInput('');
+    }
+  }
+
+  // ── Main send: detect URL → queue clip, else chat ─────────────────────────
   async function sendMessage(event) {
     event.preventDefault();
     if (!canSend) return;
@@ -690,34 +769,33 @@ function PortalPage({ user, onSignOut }) {
     const value = input.trim();
     setInput('');
 
-    // ── Local guided flow (no backend needed) ──────────────────────────────
-    if (flowId && currentQuestion && !currentQuestion.isBrief) {
-      const nextAnswers = { ...answers, [currentQuestion.key]: value };
-      if (currentQuestion.contact) {
-        setContact(c => ({ ...c, [currentQuestion.contact]: value }));
-      }
-      setAnswers(nextAnswers);
-      setMessages(current => [...current, normalizeMessage('user', value)]);
+    const footageUrl = extractFootageUrl(value);
+    const directive = stripUrl(value, footageUrl);
 
-      const flow = FLOW_COPY[flowId];
-      const nextStep = stepIndex + 1;
-
-      if (nextStep < flow.questions.length) {
-        setStepIndex(nextStep);
-        const nextQ = flow.questions[nextStep];
-        setMessages(current => [...current, normalizeMessage('assistant', nextQ.prompt)]);
-      } else {
-        submitPortal(nextAnswers, contact, [...messages, normalizeMessage('user', value)]).catch(err => {
-          setStatus({ type: 'error', message: err.message });
-        });
+    // ── URL detected → queue the clip job directly ─────────────────────────
+    if (footageUrl) {
+      setMessages(current => [...current,
+        normalizeMessage('user', value),
+        normalizeMessage('assistant', `Got it — queueing your clips now. This usually takes 3–8 minutes. Previews will appear on the right as they finish.`)
+      ]);
+      setStatus({ type: 'submitting', message: 'Queuing clip job…' });
+      try {
+        await submitClipDirect(footageUrl, directive);
+        setStatus({ type: 'success', message: 'Clip job queued.' });
+      } catch (error) {
+        setStatus({ type: 'error', message: error.message });
+        setMessages(current => [...current,
+          normalizeMessage('assistant', `Something went wrong queuing that. Error: ${error.message}`)
+        ]);
       }
       return;
     }
 
+    // ── No URL → normal chat (pricing, questions, follow-up) ──────────────
     const userMessage = normalizeMessage('user', value);
     const nextMessages = [...messages, userMessage];
     setMessages(nextMessages);
-    setStatus({ type: 'submitting', message: 'KlipItGood is thinking...' });
+    setStatus({ type: 'submitting', message: 'Thinking…' });
 
     try {
       const response = await fetch('/api/klipitgood/chat', {
@@ -727,46 +805,32 @@ function PortalPage({ user, onSignOut }) {
           messages: nextMessages.map(({ role, content }) => ({ role, content })),
           conversationId: activeChat?.conversationId,
           anonymousSessionId,
-          currentTool: activeFlow?.toolName || 'KlipItGood app',
           contact
         })
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'KlipItGood could not respond.');
+      if (!response.ok) throw new Error(result.error || 'Could not respond.');
 
-      setContact((current) => ({ ...current, ...(result.lead || {}), ...(result.contact || {}) }));
+      setContact(c => ({ ...c, ...(result.lead || {}), ...(result.contact || {}) }));
       if (result.serviceRequest || result.lead) {
-        setSavedSubmission({
-          lead: result.lead,
-          serviceRequest: result.serviceRequest,
-          conversation: result.conversation,
-          notification: result.notification
-        });
+        setSavedSubmission({ lead: result.lead, serviceRequest: result.serviceRequest, conversation: result.conversation, notification: result.notification });
       }
-      setChats((current) => current.map((chat) => {
+      setChats(current => current.map(chat => {
         if (chat.id !== activeChatId) return chat;
-        const title = chat.title === 'New chat' && value.length
-          ? value.slice(0, 42)
-          : chat.title;
+        const title = chat.title === 'New chat' && value.length ? value.slice(0, 42) : chat.title;
         return { ...chat, title, conversationId: result.conversation?.id || chat.conversationId };
       }));
-      setMessages((current) => [
-        ...current,
+      setMessages(current => [...current,
         normalizeMessage('assistant', result.assistantMessage, {
           loginGate: result.actionFlags?.requiresLogin,
           plans: result.actionFlags?.showTrialPath,
-          detectedIntent: result.detectedIntent
         })
       ]);
-      setStatus({
-        type: result.notification?.sent || result.notification?.saved ? 'success' : 'idle',
-        message: result.notification?.sent ? 'KlipItGood has been notified.' : ''
-      });
+      setStatus({ type: 'idle', message: '' });
     } catch (error) {
       setStatus({ type: 'error', message: error.message });
-      setMessages((current) => [
-        ...current,
-        normalizeMessage('assistant', 'I could not get that through cleanly. Send that one more time, or include your email and Adam can follow up.')
+      setMessages(current => [...current,
+        normalizeMessage('assistant', 'Something went wrong. Try again or paste a YouTube link to start clipping.')
       ]);
     }
   }
@@ -874,13 +938,18 @@ function PortalPage({ user, onSignOut }) {
                 <div className="avatar">{message.role === 'user' ? 'You' : 'K'}</div>
                 <div className="bubble">
                   <p>{message.content}</p>
-                  {message.quickStarts && (
+                  {message.showUpload && (
                     <div className="quick-starts">
-                      {STARTERS.map((starter) => (
-                        <button type="button" key={starter.id} onClick={() => startFlow(starter.id)}>
-                          <span>{starter.icon}</span> {starter.label}
-                        </button>
-                      ))}
+                      <label className="upload-chip-large">
+                        📎 Upload a video file
+                        <input
+                          type="file"
+                          accept="video/*"
+                          onChange={handleFileInput}
+                          disabled={status.type === 'submitting'}
+                        />
+                      </label>
+                      <button type="button" onClick={showPricing}>See pricing</button>
                     </div>
                   )}
                   {message.actions && (
@@ -931,49 +1000,33 @@ function PortalPage({ user, onSignOut }) {
           </div>
         </section>
 
-        {currentQuestion?.isBrief ? (
-          <div className="brief-wrapper">
-            <ClipBrief onSubmit={(briefText) => {
-              setInput(briefText);
-              // Auto-advance: set answers and move to next question
-              const nextAnswers = { ...answers, [currentQuestion.key]: briefText };
-              setAnswers(nextAnswers);
-              setMessages(current => [
-                ...current,
-                normalizeMessage('assistant', currentQuestion.prompt),
-                normalizeMessage('user', '(Brief set — see details above)'),
-              ]);
-              const nextStep = stepIndex + 1;
-              const flow = FLOW_COPY[flowId];
-              if (nextStep < flow.questions.length) {
-                setStepIndex(nextStep);
-                const next = flow.questions[nextStep];
-                setMessages(current => [...current, normalizeMessage('assistant', next.prompt)]);
-              } else {
-                submitPortal(nextAnswers, contact, [...messages]).catch(err => {
-                  setStatus({ type: 'error', message: err.message });
-                });
-              }
-            }} />
-          </div>
-        ) : (
-          <form className="composer" onSubmit={sendMessage}>
-            {currentQuestion?.key === 'footageAccess' && (
-              <label className="upload-chip">
-                Upload video
-                <input type="file" accept="video/*" onChange={uploadFootage} disabled={status.type === 'submitting' || uploadStatus.type === 'submitting'} />
-              </label>
-            )}
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={flowId ? 'Reply here...' : 'Tell KlipItGood what to clip...'}
-              rows="1"
-              disabled={status.type === 'submitting'}
+        <form
+          className="composer"
+          onSubmit={sendMessage}
+          onDragOver={e => e.preventDefault()}
+          onDrop={handleDrop}
+        >
+          <label className="upload-chip" title="Upload a video file">
+            📎
+            <input
+              type="file"
+              accept="video/*"
+              onChange={handleFileInput}
+              disabled={status.type === 'submitting' || uploadStatus.type === 'submitting'}
             />
-            <button type="submit" disabled={!canSend}>Send</button>
-          </form>
-        )}
+          </label>
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (canSend) sendMessage(e); } }}
+            placeholder="Paste a YouTube link or describe what to clip… (or drop a video file)"
+            rows="1"
+            disabled={status.type === 'submitting'}
+          />
+          <button type="submit" disabled={!canSend}>
+            {status.type === 'submitting' ? '…' : '↑'}
+          </button>
+        </form>
       </main>
       <ClipPreviewRail result={projectResult} />
     </div>
