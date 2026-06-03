@@ -59,6 +59,7 @@ const adminPassword = process.env.ADMIN_PASSWORD;
 const adminEmail = process.env.ADMIN_EMAIL || 'adamporsborg@gmail.com';
 const resendFrom = process.env.RESEND_FROM || 'KlipItGood <onboarding@resend.dev>';
 const workerToken = process.env.KLIPITGOOD_WORKER_TOKEN || adminPassword;
+const workerSecret = process.env.KLIPITGOOD_WORKER_SECRET || workerToken;
 const workerAutoRun = process.env.KLIPITGOOD_AUTO_RUN !== 'false';
 const runningWorkers = new Map();
 
@@ -96,13 +97,18 @@ function requireAdmin(req, res, next) {
 }
 
 function requireWorker(req, res, next) {
-  if (!workerToken) {
-    res.status(500).json({ error: 'Missing required environment variable: KLIPITGOOD_WORKER_TOKEN or ADMIN_PASSWORD' });
+  // In production KLIPITGOOD_WORKER_SECRET must be explicitly set.
+  // Unsigned callbacks are rejected with 401 — no fallback to admin password.
+  if (isProduction && !process.env.KLIPITGOOD_WORKER_SECRET) {
+    res.status(500).json({ error: 'KLIPITGOOD_WORKER_SECRET must be set in production.' });
     return;
   }
 
-  if (req.header('authorization') !== `Bearer ${workerToken}`) {
-    res.status(401).json({ error: 'Invalid worker token' });
+  const bearer = req.header('authorization') || '';
+  const token = bearer.startsWith('Bearer ') ? bearer.slice(7) : bearer;
+
+  if (!token || token !== workerSecret) {
+    res.status(401).json({ error: 'Invalid or missing worker secret.' });
     return;
   }
 
@@ -937,6 +943,188 @@ app.post('/api/worker/project/complete', requireWorker, async (req, res) => {
 
   res.json({ project: updatedProject, clips });
 });
+
+// ─── Public API (no admin password, accepts Supabase JWT or anonymous) ───────
+
+/**
+ * POST /api/public/brief
+ * Submit a creative brief for a project. Creates or updates a project row.
+ * Body: { project_id?, footage_url, brief, email? }
+ */
+app.post('/api/public/brief', async (req, res) => {
+  if (!supabase) { res.status(500).json({ error: 'Database not configured.' }); return; }
+
+  const authUser = await getUserFromRequest(req);
+  const footageUrl = cleanString(req.body?.footage_url, 1000);
+  const brief = cleanString(req.body?.brief, 4000);
+  const email = cleanString(req.body?.email, 320);
+  const projectId = cleanString(req.body?.project_id, 80);
+
+  if (!brief) { res.status(400).json({ error: 'brief is required.' }); return; }
+
+  if (projectId) {
+    // Update existing project brief
+    const { data, error } = await supabase
+      .from('projects')
+      .update({ prompt: brief, ...(footageUrl ? { footage_url: footageUrl } : {}) })
+      .eq('id', projectId)
+      .select('id, title, status, footage_url, prompt')
+      .single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ project: data });
+    return;
+  }
+
+  // Create new project from brief
+  const { data, error } = await supabase
+    .from('projects')
+    .insert({
+      user_email: email || authUser?.email || 'anonymous@klipitgood.com',
+      user_id: authUser?.id || null,
+      title: brief.slice(0, 80),
+      status: 'new',
+      footage_url: footageUrl || null,
+      prompt: brief,
+      intake_data: { source: 'public_brief', clip_goal: brief },
+      brand_assets: req.body?.brand_assets || {},
+    })
+    .select('id, title, status, footage_url, prompt, created_at')
+    .single();
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(201).json({ project: data });
+});
+
+/**
+ * POST /api/public/create-project
+ * Create a fully-specified project and queue it immediately.
+ * Body: { footage_url, brief, email?, brand_assets? }
+ */
+app.post('/api/public/create-project', async (req, res) => {
+  if (!supabase) { res.status(500).json({ error: 'Database not configured.' }); return; }
+
+  const authUser = await getUserFromRequest(req);
+  const footageUrl = cleanString(req.body?.footage_url, 1000);
+  const brief = cleanString(req.body?.brief, 4000);
+  const email = cleanString(req.body?.email, 320);
+
+  if (!footageUrl) { res.status(400).json({ error: 'footage_url is required.' }); return; }
+  if (!brief) { res.status(400).json({ error: 'brief is required.' }); return; }
+
+  const { data: project, error } = await supabase
+    .from('projects')
+    .insert({
+      user_email: email || authUser?.email || 'anonymous@klipitgood.com',
+      user_id: authUser?.id || null,
+      title: brief.slice(0, 80),
+      status: 'queued',
+      footage_url: footageUrl,
+      prompt: brief,
+      intake_data: {
+        clip_goal: brief,
+        source: 'public_api',
+      },
+      brand_assets: req.body?.brand_assets || {},
+    })
+    .select('id, title, status, footage_url, prompt, created_at')
+    .single();
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+
+  const processing = launchWorkerForProject(project.id);
+  res.status(201).json({ project, processing });
+});
+
+/**
+ * POST /api/public/edit-plan
+ * Request a prompted edit to one or more clips. Creates edit_jobs rows.
+ * Body: { project_id, clip_ids?, instruction }
+ */
+app.post('/api/public/edit-plan', async (req, res) => {
+  if (!supabase) { res.status(500).json({ error: 'Database not configured.' }); return; }
+
+  const authUser = await getUserFromRequest(req);
+  const projectId = cleanString(req.body?.project_id, 80);
+  const instruction = cleanString(req.body?.instruction, 2000);
+  const clipIds = Array.isArray(req.body?.clip_ids) ? req.body.clip_ids : [];
+
+  if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
+  if (!instruction) { res.status(400).json({ error: 'instruction is required.' }); return; }
+
+  const rows = clipIds.length
+    ? clipIds.map(clipId => ({
+        project_id: projectId,
+        clip_id: cleanString(clipId, 80),
+        user_id: authUser?.id || null,
+        instruction,
+        status: 'pending',
+      }))
+    : [{
+        project_id: projectId,
+        clip_id: null,
+        user_id: authUser?.id || null,
+        instruction,
+        status: 'pending',
+        scope: 'global',
+      }];
+
+  const { data, error } = await supabase
+    .from('edit_jobs')
+    .insert(rows)
+    .select('id, project_id, clip_id, instruction, status, created_at');
+
+  if (error) {
+    // If edit_jobs table doesn't exist yet, return a graceful pending response
+    if (error.code === '42P01') {
+      res.status(202).json({ message: 'Edit request received. edit_jobs table not yet applied — run schema.sql.', rows });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.status(201).json({ edit_jobs: data });
+});
+
+/**
+ * POST /api/public/clip-feedback
+ * Record user feedback on a clip (thumbs up/down, comment).
+ * Body: { clip_id, rating, comment? }
+ */
+app.post('/api/public/clip-feedback', async (req, res) => {
+  if (!supabase) { res.status(500).json({ error: 'Database not configured.' }); return; }
+
+  const authUser = await getUserFromRequest(req);
+  const clipId = cleanString(req.body?.clip_id, 80);
+  const rating = req.body?.rating; // 1 | -1 | 0
+  const comment = cleanString(req.body?.comment, 500);
+
+  if (!clipId) { res.status(400).json({ error: 'clip_id is required.' }); return; }
+
+  const { data, error } = await supabase
+    .from('clip_feedback')
+    .insert({
+      clip_id: clipId,
+      user_id: authUser?.id || null,
+      rating: typeof rating === 'number' ? rating : null,
+      comment: comment || null,
+    })
+    .select('id, clip_id, user_id, rating, comment, created_at')
+    .single();
+
+  if (error) {
+    if (error.code === '42P01') {
+      res.status(202).json({ message: 'Feedback received. clip_feedback table not yet applied — run schema.sql.' });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json({ feedback: data });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 if (isProduction) {
   app.use(express.static(path.join(rootDir, 'dist')));

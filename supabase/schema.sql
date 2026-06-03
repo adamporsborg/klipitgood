@@ -131,6 +131,113 @@ create index if not exists clips_project_id_idx on public.clips (project_id);
 create index if not exists messages_project_id_created_at_idx on public.messages (project_id, created_at);
 create index if not exists messages_conversation_id_created_at_idx on public.messages (conversation_id, created_at);
 
+-- ── Edit jobs: prompted per-clip or global edits ──────────────────────────
+create table if not exists public.edit_jobs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  clip_id uuid references public.clips(id) on delete set null,
+  user_id uuid references auth.users(id) on delete set null,
+  instruction text not null,
+  scope text not null default 'clip', -- 'clip' | 'global'
+  status text not null default 'pending', -- 'pending' | 'processing' | 'done' | 'failed'
+  result_clip_id uuid references public.clips(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists edit_jobs_project_id_idx on public.edit_jobs (project_id);
+create index if not exists edit_jobs_status_idx on public.edit_jobs (status);
+alter table public.edit_jobs enable row level security;
+
+drop policy if exists "Users can manage own edit jobs" on public.edit_jobs;
+create policy "Users can manage own edit jobs"
+on public.edit_jobs for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "Anon can insert edit jobs" on public.edit_jobs;
+create policy "Anon can insert edit jobs"
+on public.edit_jobs for insert
+to anon
+with check (user_id is null);
+
+-- ── Clip feedback: thumbs up/down + comments ─────────────────────────────
+create table if not exists public.clip_feedback (
+  id uuid primary key default gen_random_uuid(),
+  clip_id uuid not null references public.clips(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
+  rating smallint check (rating in (-1, 0, 1)),
+  comment text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists clip_feedback_clip_id_idx on public.clip_feedback (clip_id);
+alter table public.clip_feedback enable row level security;
+
+drop policy if exists "Anyone can leave feedback" on public.clip_feedback;
+create policy "Anyone can leave feedback"
+on public.clip_feedback for insert
+to anon, authenticated
+with check (clip_id is not null);
+
+drop policy if exists "Users can read own feedback" on public.clip_feedback;
+create policy "Users can read own feedback"
+on public.clip_feedback for select
+to authenticated
+using (auth.uid() = user_id);
+
+-- ── Worker events: processing log per project ────────────────────────────
+create table if not exists public.worker_events (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  event text not null, -- 'started' | 'transcribed' | 'analyzed' | 'rendered' | 'failed'
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists worker_events_project_id_idx on public.worker_events (project_id);
+alter table public.worker_events enable row level security;
+
+drop policy if exists "Worker can insert events" on public.worker_events;
+create policy "Worker can insert events"
+on public.worker_events for insert
+to service_role
+with check (true);
+
+drop policy if exists "Users can read own project events" on public.worker_events;
+create policy "Users can read own project events"
+on public.worker_events for select
+to authenticated
+using (
+  exists (
+    select 1 from public.projects
+    where projects.id = worker_events.project_id
+      and projects.user_id = auth.uid()
+  )
+);
+
+-- ── Render runs: one row per ffmpeg render attempt ───────────────────────
+create table if not exists public.render_runs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  clip_id uuid references public.clips(id) on delete set null,
+  status text not null default 'running', -- 'running' | 'done' | 'failed'
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  error text,
+  output_path text
+);
+
+create index if not exists render_runs_project_id_idx on public.render_runs (project_id);
+alter table public.render_runs enable row level security;
+
+drop policy if exists "Worker can manage render runs" on public.render_runs;
+create policy "Worker can manage render runs"
+on public.render_runs for all
+to service_role
+using (true)
+with check (true);
+
 alter table public.leads enable row level security;
 alter table public.anonymous_sessions enable row level security;
 alter table public.service_requests enable row level security;
