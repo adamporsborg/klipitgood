@@ -136,13 +136,48 @@ function workerBaseUrl() {
   return process.env.KLIPITGOOD_PUBLIC_API_URL || `http://127.0.0.1:${port}`;
 }
 
-function launchWorkerForProject(projectId) {
-  if (!workerAutoRun || !projectId || runningWorkers.has(projectId)) {
+// Trigger GitHub Actions via repository_dispatch — no Supabase webhook needed.
+// Falls back to local worker spawn if GH_DISPATCH_TOKEN is not set.
+async function launchWorkerForProject(projectId) {
+  if (!projectId) return { started: false, reason: 'no project id' };
+
+  const githubToken = process.env.GH_DISPATCH_TOKEN;
+  const githubRepo = process.env.GITHUB_REPO || 'adamporsborg/klipitgood';
+
+  if (githubToken) {
+    try {
+      const res = await fetch(`https://api.github.com/repos/${githubRepo}/dispatches`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${githubToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          event_type: 'clip_job_queued',
+          client_payload: { project_id: projectId },
+        }),
+      });
+
+      if (res.status === 204) {
+        console.log(`  ✓ GitHub Actions triggered for project ${projectId}`);
+        return { started: true, method: 'github_actions' };
+      }
+
+      const text = await res.text();
+      console.warn(`  ⚠ GitHub dispatch returned ${res.status}: ${text}`);
+    } catch (err) {
+      console.warn(`  ⚠ GitHub dispatch failed: ${err.message}`);
+    }
+  }
+
+  // Local fallback — only works when engine is present (dev/self-hosted)
+  if (!workerAutoRun || runningWorkers.has(projectId)) {
     return { started: false, reason: !workerAutoRun ? 'auto-run disabled' : 'already running' };
   }
 
   if (!engineReady()) {
-    return { started: false, reason: `Missing clipping worker under ${engineRoot}` };
+    return { started: false, reason: `No GitHub token and no local engine under ${engineRoot}` };
   }
 
   const child = spawn('npm', ['run', 'worker', '--', '--project', projectId], {
@@ -161,7 +196,7 @@ function launchWorkerForProject(projectId) {
   child.once('exit', () => runningWorkers.delete(projectId));
   child.unref();
 
-  return { started: true, pid: child.pid };
+  return { started: true, method: 'local', pid: child.pid };
 }
 
 async function loadProjectWithClips(projectId) {
@@ -588,7 +623,7 @@ app.post('/api/portal/submit', async (req, res) => {
     queuedProject = project || null;
   }
 
-  const processing = queuedProject ? launchWorkerForProject(queuedProject.id) : { started: false };
+  const processing = queuedProject ? await launchWorkerForProject(queuedProject.id) : { started: false };
 
   let notification = { sent: false };
   if (resend) {
@@ -785,7 +820,7 @@ app.get('/api/projects/:id/status', async (req, res) => {
 
 app.post('/api/projects/:id/process', requireAdmin, async (req, res) => {
   const projectId = cleanString(req.params.id, 80);
-  const result = launchWorkerForProject(projectId);
+  const result = await launchWorkerForProject(projectId);
   res.status(result.started ? 202 : 409).json({ processing: result });
 });
 
@@ -1031,7 +1066,7 @@ app.post('/api/public/create-project', async (req, res) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
 
-  const processing = launchWorkerForProject(project.id);
+  const processing = await launchWorkerForProject(project.id);
   res.status(201).json({ project, processing });
 });
 

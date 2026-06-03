@@ -30,3 +30,7 @@ services:
         generateValue: true
       - key: KLIPITGOOD_AUTO_RUN
         value: "false"
+      - key: GH_DISPATCH_TOKEN
+        sync: false
+      - key: GITHUB_REPO
+        value: adamporsborg/klipitgood
