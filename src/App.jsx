@@ -103,7 +103,7 @@ const TOOL_STACK = [
 ];
 
 const SETUP_CHECKS = [
-  { label: 'Supabase project URL', status: 'connected', detail: 'Provided for ioailfmpuycojlgdpdfk' },
+  { label: 'Supabase project URL', status: 'connected', detail: 'Provided for cpaeklanwpiegkpmceuw' },
   { label: 'Supabase publishable key', status: 'connected', detail: 'Safe frontend key received' },
   { label: 'Database schema', status: 'needs-action', detail: 'Run supabase/schema.sql or provide DB password/service role' },
   { label: 'Resend email', status: 'needs-action', detail: 'Needs RESEND_API_KEY and verified sender' },
