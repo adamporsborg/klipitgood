@@ -538,6 +538,8 @@ function PortalPage({ user, onSignOut }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [savedSubmission, setSavedSubmission] = useState(null);
   const [projectResult, setProjectResult] = useState(null);
+  // Footage URL waiting for user direction before we submit
+  const [pendingFootageUrl, setPendingFootageUrl] = useState(null);
 
   // ── Real Supabase project list (only when logged in) ──────────────────────
   const [supabaseProjects, setSupabaseProjects] = useState([]);
@@ -876,13 +878,13 @@ function PortalPage({ user, onSignOut }) {
     return result;
   }
 
-  // ── Upload a file, then auto-submit ───────────────────────────────────────
-  async function uploadFootage(file, directive = '') {
+  // ── Upload a file → hold URL, ask for direction ───────────────────────────
+  async function uploadFootage(file) {
     if (!file) return;
     setUploadStatus({ type: 'submitting', message: `Uploading ${file.name}…` });
     setMessages(current => [...current,
-      normalizeMessage('user', `📎 ${file.name}${directive ? `\n${directive}` : ''}`),
-      normalizeMessage('assistant', `Got it — uploading and queueing your clips now. This usually takes 3–8 minutes. I'll show previews on the right as they finish.`)
+      normalizeMessage('user', `📎 ${file.name}`),
+      normalizeMessage('assistant', `Uploading your footage now…`)
     ]);
     try {
       const uploadResponse = await fetch('/api/uploads/footage', {
@@ -895,10 +897,20 @@ function PortalPage({ user, onSignOut }) {
       });
       const uploadResult = await uploadResponse.json();
       if (!uploadResponse.ok) throw new Error(uploadResult.error || 'Upload failed.');
+      const uploadedUrl = uploadResult.footageUrl || uploadResult.url;
       setUploadStatus({ type: 'idle', message: '' });
-      await submitClipDirect(uploadResult.footageUrl, directive);
+      setPendingFootageUrl(uploadedUrl);
+      setMessages(current => [...current,
+        normalizeMessage('assistant',
+          `Upload done. What should I clip? Tell me what to look for — topics, tone, moments you want, anything to avoid. The more specific the better.`,
+          { awaitingDirection: true }
+        )
+      ]);
     } catch (error) {
       setUploadStatus({ type: 'error', message: error.message });
+      setMessages(current => [...current,
+        normalizeMessage('assistant', `Upload failed: ${error.message}`)
+      ]);
     }
   }
 
@@ -907,18 +919,14 @@ function PortalPage({ user, onSignOut }) {
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = '';
-    uploadFootage(file, input.trim());
-    setInput('');
+    uploadFootage(file);
   }
 
   // ── Handle drag & drop onto the composer ──────────────────────────────────
   function handleDrop(event) {
     event.preventDefault();
     const file = event.dataTransfer.files?.[0];
-    if (file && file.type.startsWith('video/')) {
-      uploadFootage(file, input.trim());
-      setInput('');
-    }
+    if (file && file.type.startsWith('video/')) uploadFootage(file);
   }
 
   // ── Main send: detect URL → queue clip, else chat ─────────────────────────
@@ -932,20 +940,40 @@ function PortalPage({ user, onSignOut }) {
     const footageUrl = extractFootageUrl(value);
     const directive = stripUrl(value, footageUrl);
 
-    // ── URL detected → queue the clip job directly ─────────────────────────
-    if (footageUrl) {
+    // ── URL detected — hold it, ask for direction ──────────────────────────
+    if (footageUrl && !pendingFootageUrl) {
+      setPendingFootageUrl(footageUrl);
       setMessages(current => [...current,
         normalizeMessage('user', value),
-        normalizeMessage('assistant', `Got it — queueing your clips now. This usually takes 3–8 minutes. Previews will appear on the right as they finish.`)
+        normalizeMessage('assistant',
+          directive
+            // They included direction with the link — confirm and ask to confirm/add more
+            ? `Got it. I'll focus on: "${directive}". Anything else to add — tone, topics to avoid, length preference? Or just hit send to start clipping.`
+            : `Got the footage. What should I clip? Tell me what to look for — specific topics, tone, moments you want, or anything to cut out.`,
+          { awaitingDirection: !directive, pendingUrl: footageUrl }
+        )
+      ]);
+      // If they included direction, pre-fill input so they can send immediately or edit
+      if (directive) setInput(directive);
+      return;
+    }
+
+    // ── User is giving direction for pending footage ───────────────────────
+    if (pendingFootageUrl) {
+      const url = pendingFootageUrl;
+      setPendingFootageUrl(null);
+      setMessages(current => [...current,
+        normalizeMessage('user', value),
+        normalizeMessage('assistant', `On it — clipping now. Check the right panel in a few minutes.`)
       ]);
       setStatus({ type: 'submitting', message: 'Queuing clip job…' });
       try {
-        await submitClipDirect(footageUrl, directive);
+        await submitClipDirect(url, value);
         setStatus({ type: 'success', message: 'Clip job queued.' });
       } catch (error) {
         setStatus({ type: 'error', message: error.message });
         setMessages(current => [...current,
-          normalizeMessage('assistant', `Something went wrong queuing that. Error: ${error.message}`)
+          normalizeMessage('assistant', `Something went wrong: ${error.message}`)
         ]);
       }
       return;
@@ -1179,7 +1207,7 @@ function PortalPage({ user, onSignOut }) {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (canSend) sendMessage(e); } }}
-            placeholder="Tell me what to clip, or just drop a video file…"
+            placeholder={pendingFootageUrl ? 'Tell me what to clip — topics, tone, what to cut out…' : 'Tell me what to clip, or drop a video file…'}
             rows="1"
             disabled={status.type === 'submitting'}
           />
