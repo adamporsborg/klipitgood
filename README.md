@@ -1,4 +1,30 @@
-# KlipItGood
+# KlipItGood — Early Prototype (Archived)
+
+> ## ⚠️ This is NOT the KlipItGood product. Do not build from this repo.
+>
+> This repository is an **early proof-of-concept snapshot from June 2026**, kept public as a technical demo only. It is **archived, unmaintained, and months behind** the real product.
+>
+> ### 👉 The actual KlipItGood is for sale at [unser.media/klipitgood](https://unser.media/klipitgood)
+>
+> The current, supported version includes everything this prototype does not:
+> - **Face-tracked vertical layouts** — full, split, and stacked framing
+> - **YouTube channel ripping** — point it at a channel, get clips
+> - **Drift-free word-highlight captions** (fixed since this snapshot)
+> - **Hook titles, text cards, and visual overlays**
+> - **A working desktop app + guided setup**
+>
+> | Edition | Price | What you get |
+> |---------|-------|--------------|
+> | **DIY Edition** | **$50** (first 100 customers — reg. $199) | The full current toolkit, self-install |
+> | **Guided Edition** | **$250** | We set everything up with you |
+>
+> **If you're evaluating KlipItGood for your business or considering acquiring the tool: this repo is not it.** Building from this snapshot means rebuilding months of fixes we've already shipped. Get the real thing: **[unser.media/klipitgood](https://unser.media/klipitgood)** — or contact **adam@liftedspace.com**.
+
+---
+
+## About this prototype (historical, June 2026)
+
+Everything below describes the original proof-of-concept as it existed when this snapshot was taken. It is preserved for reference only.
 
 An AI-powered video clipping pipeline that automatically identifies, cuts, and delivers short-form clips from long-form footage — fully integrated with a conversational intake portal and serverless deployment via GitHub Actions.
 
@@ -204,4 +230,4 @@ Caption style can be specified per-job via the portal or system prompt context.
 
 ## License
 
-MIT — built by [Unser.Media](https://unser.media)
+MIT — applies to this prototype snapshot only. The commercial KlipItGood product sold at [unser.media/klipitgood](https://unser.media/klipitgood) is a separate, proprietary codebase and is **not** contained in this repository.
